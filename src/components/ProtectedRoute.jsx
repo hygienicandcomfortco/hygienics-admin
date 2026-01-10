@@ -6,7 +6,7 @@ function ProtectedRoute({ children }) {
     sessionStorage.getItem("isLoggedIn") === "true";
 
   if (!isLoggedIn) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="#/login" replace />;
   }
 
   return children;
