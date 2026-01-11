@@ -3,5 +3,6 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/hygienics-admin/",
+  // Use "/" when deploying to the root of a subdomain
+  base: "/", 
 });
