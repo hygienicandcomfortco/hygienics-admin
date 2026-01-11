@@ -90,7 +90,7 @@ function AdminLayout({ children }) {
 
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto relative z-10 flex flex-col">
-        <header className="flex justify-between items-center p-8 bg-white/50 dark:bg-transparent backdrop-blur-sm transition-colors">
+        <header className="flex justify-between items-center p-8 bg-white/50 dark:bg-transparent backdrop-blur-sm transition-colors relative z-[50]">
            <div className="flex flex-col">
              <span className="text-[10px] font-black text-blue-600 dark:text-blue-500 uppercase tracking-[0.2em] mb-1">System Management</span>
              <h2 className="text-slate-500 dark:text-white text-xs font-bold opacity-70 dark:opacity-50 uppercase">Dashboard {location.pathname.replace('/', ' / ')}</h2>
