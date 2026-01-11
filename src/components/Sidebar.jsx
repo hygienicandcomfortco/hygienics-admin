@@ -8,22 +8,23 @@ import {
   MdLogout, 
   MdErrorOutline 
 } from "react-icons/md";
-// Import your actual logo from the assets folder
+
 import logo from "../assets/logo.png";
 
 function Sidebar() {
   const location = useLocation();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // Function to determine if a link is currently active
   const isActive = (path) => location.pathname === path;
 
   const handleFinalLogout = () => {
-    // 1. Remove only authentication data (preserves your products/categories)
+    // Clear login session data
     localStorage.removeItem("isLoggedIn");
     sessionStorage.removeItem("isLoggedIn");
-    
-    // 2. Clear modal
+    localStorage.removeItem("userRole");
+    localStorage.removeItem("userName");
+
+    // Close modal
     setShowLogoutConfirm(false);
     
     // 3. FORCE REFRESH to Login page
@@ -34,7 +35,6 @@ function Sidebar() {
   return (
     <>
       <aside className="w-64 bg-[#0f172a]/50 backdrop-blur-xl text-slate-400 p-6 flex flex-col border-r border-slate-800 z-20">
-        {/* LOGO SECTION */}
         <div className="flex items-center gap-3 mb-10">
           <img 
             src={logo} 
@@ -50,8 +50,7 @@ function Sidebar() {
             </p>
           </div>
         </div>
-        
-        {/* NAVIGATION LINKS */}
+
         <nav className="flex-1 space-y-2 font-bold text-sm">
           <Link 
             to="/dashboard" 
@@ -89,8 +88,7 @@ function Sidebar() {
             <MdPeople size={22}/> Customers
           </Link>
         </nav>
-        
-        {/* LOGOUT BUTTON */}
+
         <button 
           onClick={() => setShowLogoutConfirm(true)}
           className="flex items-center gap-3 p-4 bg-slate-900/50 text-slate-300 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-rose-500 hover:text-white transition-all border border-slate-800 mt-auto shadow-2xl active:scale-95"
@@ -99,10 +97,9 @@ function Sidebar() {
         </button>
       </aside>
 
-      {/* LOGOUT CONFIRMATION MODAL */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[1000] p-4">
-          <div className="bg-white w-full max-w-sm rounded-[40px] p-10 shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="bg-white w-full max-w-sm rounded-[40px] p-10 shadow-2xl">
             <div className="flex flex-col items-center text-center">
               <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mb-6 ring-8 ring-rose-50/50">
                 <MdErrorOutline size={40} />
