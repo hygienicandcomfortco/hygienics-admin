@@ -45,10 +45,9 @@ function Login() {
       // 4. Role-Based Redirection
       // window.location.href is used to ensure a clean state load
       if (profile.role === "admin") {
-        window.location.href = "/dashboard";
+        window.location.href = "/#/dashboard";
       } else {
-        // Staff members go directly to the Orders terminal
-        window.location.href = "/orders"; 
+        window.location.href = "/#/orders";
       }
 
     } catch (err) {
