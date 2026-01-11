@@ -14,7 +14,7 @@ import Settings from "./pages/Settings"; // Ensure this file exists in /pages
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }) => {
   const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-  return isLoggedIn ? children : <Navigate to="/login" replace />;
+  return isLoggedIn ? children : <Navigate to="/#/login" replace />;
 };
 
 function App() {
