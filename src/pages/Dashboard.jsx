@@ -39,7 +39,7 @@ function Dashboard() {
       if (products && orders) {
         // Calculation logic for total stock value
         const totalVal = products.reduce((acc, p) => {
-            const price = Number(p.purchase_price || p.purchasePrice || 0);
+            const price = Number(p.price || p.cost_price || p.buy_price || p.purchase_price || 0);
             const qty = Number(p.stock || 0);
             return acc + (price * qty);
         }, 0);
