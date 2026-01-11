@@ -28,7 +28,7 @@ function Sidebar() {
     
     // 3. FORCE REFRESH to Login page
     // This is the primary fix for the "white screen" issue
-    window.location.href = "/login"; 
+    window.location.href = "/#/login";
   };
 
   return (
