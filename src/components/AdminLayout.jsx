@@ -48,7 +48,7 @@ function AdminLayout({ children }) {
     localStorage.removeItem("userRole");
     sessionStorage.removeItem("isLoggedIn");
     setShowLogoutConfirm(false);
-    window.location.href = "https://admin.hygienicandcomfortco.shop/#/login"; 
+   window.location.href = "/#/login";
   };
 
   const isActive = (path) => location.pathname === path;
