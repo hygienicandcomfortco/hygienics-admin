@@ -5,7 +5,7 @@ import {
   MdShoppingCart, MdPeople, MdPerson, MdSettings, MdShield 
 } from "react-icons/md";
 import logo from "../assets/logo.png";
-import { supabase } from "../utils/supabase"; // Path updated to match your explorer
+import { supabase } from "../lib/supabase";
 
 function AdminLayout({ children }) {
   const location = useLocation();
