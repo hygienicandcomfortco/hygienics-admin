@@ -67,7 +67,7 @@ function AdminLayout({ children }) {
     return () => {
       supabase.removeChannel(orderChannel);
     };
-  }, []);
+  }, [logo]);
 
   /* =======================
       CLICK OUTSIDE LOGIC
