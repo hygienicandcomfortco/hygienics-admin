@@ -5,22 +5,26 @@ import {
   MdShoppingCart, MdPeople, MdPerson, MdSettings, MdShield 
 } from "react-icons/md";
 import logo from "../assets/logo.png";
+import { supabase } from "../utils/supabase"; // Path updated to match your explorer
 
 function AdminLayout({ children }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const menuRef = useRef(null);
 
   /* =======================
-      USER DATA (Initials & Role)
+      USER DATA (Dynamic)
   ======================= */
+  // Pulling exactly what was stored during login to prevent "Main Admin" default
   const userName = localStorage.getItem("userName") || "Admin User";
   const userRole = localStorage.getItem("userRole") || "Staff"; 
   
   const getInitials = (name) => {
     return name
       .split(" ")
+      .filter(Boolean)
       .map((word) => word[0])
       .join("")
       .toUpperCase()
@@ -28,6 +32,42 @@ function AdminLayout({ children }) {
   };
 
   const userInitials = getInitials(userName);
+
+  /* =======================
+      REAL-TIME NOTIFICATIONS
+  ======================= */
+  useEffect(() => {
+    // 1. Request Permission
+    if (Notification.permission !== "granted") {
+      Notification.requestPermission();
+    }
+
+    // 2. Setup Subscription for order alerts
+    const orderChannel = supabase
+      .channel('admin-order-alerts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        (payload) => {
+          // Play Alert Sound
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+          audio.play().catch(() => console.log("Sound alert ready. Click dashboard once to enable."));
+
+          // Browser Notification
+          if (Notification.permission === "granted") {
+            new Notification("🚨 New Order Received!", {
+              body: `Customer: ${payload.new.customer_name}\nTotal: ₹${payload.new.total_price}`,
+              icon: logo 
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(orderChannel);
+    };
+  }, []);
 
   /* =======================
       CLICK OUTSIDE LOGIC
@@ -43,25 +83,22 @@ function AdminLayout({ children }) {
   }, []);
 
   const handleFinalLogout = () => {
-    localStorage.removeItem("isLoggedIn");
-    localStorage.removeItem("userName");
-    localStorage.removeItem("userRole");
-    sessionStorage.removeItem("isLoggedIn");
+    localStorage.clear();
+    sessionStorage.clear();
     setShowLogoutConfirm(false);
-   window.location.href = "/#/login";
+    navigate("/login");
   };
 
   const isActive = (path) => location.pathname === path;
 
   return (
-    // Added dark:bg-[#0f172a] for the main container background
     <div className="flex h-screen bg-[#f8fafc] dark:bg-[#0f172a] transition-colors duration-300 relative overflow-hidden">
       
-      {/* Background Decor - Adjusted opacity for dark mode */}
+      {/* Background Decor */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-900/10 dark:bg-blue-900/20 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[10%] w-[30%] h-[30%] rounded-full bg-indigo-900/10 dark:bg-indigo-900/20 blur-[100px] pointer-events-none" />
 
-      {/* SIDEBAR - Added light/dark border and background variants */}
+      {/* SIDEBAR */}
       <aside className="w-64 bg-white dark:bg-[#0f172a]/50 backdrop-blur-md text-slate-500 dark:text-slate-400 p-6 flex flex-col border-r border-slate-200 dark:border-slate-800 z-20 transition-colors">
         <div className="flex items-center gap-3 mb-10">
           <Link to="/dashboard" className="flex items-center gap-3">
@@ -91,22 +128,20 @@ function AdminLayout({ children }) {
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto relative z-10 flex flex-col">
         <header className="flex justify-between items-center p-8 bg-white/50 dark:bg-transparent backdrop-blur-sm transition-colors relative z-[50]">
-           <div className="flex flex-col">
-             <span className="text-[10px] font-black text-blue-600 dark:text-blue-500 uppercase tracking-[0.2em] mb-1">System Management</span>
-             <h2 className="text-slate-500 dark:text-white text-xs font-bold opacity-70 dark:opacity-50 uppercase">Dashboard {location.pathname.replace('/', ' / ')}</h2>
-           </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-blue-600 dark:text-blue-500 uppercase tracking-[0.2em] mb-1">System Management</span>
+              <h2 className="text-slate-500 dark:text-white text-xs font-bold opacity-70 dark:opacity-50 uppercase">Dashboard {location.pathname.replace('/', ' / ')}</h2>
+            </div>
 
-           {/* PROFILE MENU AREA */}
-           <div className="relative" ref={menuRef}>
-              <button 
+            <div className="relative" ref={menuRef}>
+               <button 
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
                 className="w-10 h-10 rounded-xl bg-blue-600 border border-blue-400 flex items-center justify-center text-white text-xs font-black shadow-lg shadow-blue-900/40 hover:scale-105 active:scale-95 transition-all"
-              >
+               >
                 {userInitials}
-              </button>
+               </button>
 
-              {/* DROPDOWN MENU - Added dark mode support for the popup */}
-              {showProfileMenu && (
+               {showProfileMenu && (
                 <div className="absolute right-0 mt-3 w-64 bg-white dark:bg-slate-800 rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-700 p-2 z-[100] animate-in fade-in zoom-in-95 duration-200 origin-top-right">
                   <div className="p-5 border-b border-slate-50 dark:border-slate-700">
                     <div className="flex items-center gap-3 mb-3">
@@ -123,37 +158,22 @@ function AdminLayout({ children }) {
                   </div>
                   
                   <div className="p-2 space-y-1">
-                    <Link 
-                      to="/profile" 
-                      onClick={() => setShowProfileMenu(false)}
-                      className="w-full flex items-center gap-3 p-3 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors font-bold text-xs uppercase tracking-tight"
-                    >
+                    <Link to="/profile" onClick={() => setShowProfileMenu(false)} className="w-full flex items-center gap-3 p-3 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors font-bold text-xs uppercase tracking-tight">
                       <MdPerson size={20} className="text-slate-400 dark:text-slate-500" /> My Profile
                     </Link>
-
-                    <Link 
-                      to="/settings" 
-                      onClick={() => setShowProfileMenu(false)}
-                      className="w-full flex items-center gap-3 p-3 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors font-bold text-xs uppercase tracking-tight"
-                    >
+                    <Link to="/settings" onClick={() => setShowProfileMenu(false)} className="w-full flex items-center gap-3 p-3 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors font-bold text-xs uppercase tracking-tight">
                       <MdSettings size={20} className="text-slate-400 dark:text-slate-500" /> Settings
                     </Link>
-                    
                     <div className="h-px bg-slate-50 dark:bg-slate-700 my-1 mx-2" />
-                    
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); setShowLogoutConfirm(true); }}
-                      className="w-full flex items-center gap-3 p-3 rounded-2xl text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors font-bold text-xs uppercase tracking-tight"
-                    >
+                    <button onClick={() => { setShowProfileMenu(false); setShowLogoutConfirm(true); }} className="w-full flex items-center gap-3 p-3 rounded-2xl text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors font-bold text-xs uppercase tracking-tight">
                       <MdLogout size={20} /> Sign Out
                     </button>
                   </div>
                 </div>
-              )}
-           </div>
+               )}
+            </div>
         </header>
 
-        {/* Content Area */}
         <div className="px-8 pb-10 flex-1">{children}</div>
       </main>
 
