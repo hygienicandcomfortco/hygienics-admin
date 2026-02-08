@@ -1,6 +1,6 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useEffect, useState, useMemo } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../utils/supabase";
 import AdminLayout from "../components/AdminLayout";
 import { MdArrowBack, MdPrint, MdHistory, MdSearch, MdReceiptLong } from "react-icons/md";
 
@@ -122,7 +122,8 @@ function CustomerProfile() {
           </div>
           <div style="margin-bottom: 20px;">
             <strong>Customer:</strong> ${customer?.customer_name}<br>
-            <strong>Phone:</strong> ${customer?.phone}
+            <strong>Phone:</strong> ${customer?.phone}<br>
+            <strong>Email:</strong> ${customer?.email || "—"}
           </div>
           <table>
             <thead>
@@ -172,7 +173,8 @@ function CustomerProfile() {
           
           <div className="relative z-10">
             <h2 className="text-5xl font-black text-slate-900 tracking-tighter mb-2">{customer.customer_name}</h2>
-            <p className="text-slate-500 font-bold text-xl mb-10">{customer.phone}</p>
+            <p className="text-slate-500 font-bold text-xl">{customer.phone}</p>
+            <p className="text-slate-400 font-bold text-sm mb-10">{customer.email || "—"}</p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="bg-slate-50 p-8 rounded-[32px] border border-slate-100 flex flex-col justify-center">

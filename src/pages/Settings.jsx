@@ -12,19 +12,19 @@ function Settings({ isDark, setIsDark }) {
   return (
     <AdminLayout>
       <div className="mb-8 px-4">
-        <h2 className="text-3xl font-black text-white uppercase tracking-tight">System Settings</h2>
-        <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Configure your workspace preference</p>
+        <h2 className="text-3xl font-black text-slate-900 dark:text-white uppercase tracking-tight">System Settings</h2>
+        <p className="text-slate-500 dark:text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Configure your workspace preference</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-4">
         
         {/* THEME CONFIGURATION */}
-        <div className="bg-white dark:bg-slate-800 rounded-[40px] p-10 shadow-2xl border border-slate-100 dark:border-slate-700 transition-colors">
+        <div className="bg-white dark:bg-[#0f172a] rounded-[40px] p-10 shadow-2xl border border-slate-100 dark:border-slate-800 transition-colors">
           <h4 className="text-lg font-black text-slate-900 dark:text-white uppercase mb-8 flex items-center gap-2">
             <MdDarkMode className="text-blue-600" /> Appearance
           </h4>
           
-          <div className="flex items-center justify-between p-6 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between p-6 bg-slate-50 dark:bg-slate-900/60 rounded-3xl border border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center text-blue-600">
                 {isDark ? <MdDarkMode size={24} /> : <MdLightMode size={24} />}
@@ -46,7 +46,7 @@ function Settings({ isDark, setIsDark }) {
         </div>
 
         {/* SHOP INFORMATION */}
-        <div className="bg-white dark:bg-slate-800 rounded-[40px] p-10 shadow-2xl border border-slate-100 dark:border-slate-700 transition-colors">
+        <div className="bg-white dark:bg-[#0f172a] rounded-[40px] p-10 shadow-2xl border border-slate-100 dark:border-slate-800 transition-colors">
           <h4 className="text-lg font-black text-slate-900 dark:text-white uppercase mb-8 flex items-center gap-2">
             <MdStore className="text-blue-600" /> Store Profile
           </h4>
@@ -54,7 +54,7 @@ function Settings({ isDark, setIsDark }) {
           <div className="space-y-4">
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Shop Name</label>
-              <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-100 dark:border-slate-800">
                 <MdStore className="text-slate-400" />
                 <input className="bg-transparent border-none outline-none font-bold text-slate-700 dark:text-slate-200 w-full" value={shopInfo.name} disabled />
               </div>
@@ -62,7 +62,7 @@ function Settings({ isDark, setIsDark }) {
 
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Phone</label>
-              <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-100 dark:border-slate-800">
                 <MdPhone className="text-slate-400" />
                 <input className="bg-transparent border-none outline-none font-bold text-slate-700 dark:text-slate-200 w-full" value={shopInfo.phone} disabled />
               </div>
@@ -70,7 +70,7 @@ function Settings({ isDark, setIsDark }) {
 
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Location</label>
-              <div className="flex items-start gap-3 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <div className="flex items-start gap-3 p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-100 dark:border-slate-800">
                 <MdLocationOn className="text-slate-400 mt-1" />
                 <textarea className="bg-transparent border-none outline-none font-bold text-slate-700 dark:text-slate-200 w-full h-20 resize-none" value={shopInfo.address} disabled />
               </div>

@@ -7,6 +7,37 @@ import {
   MdCheck, MdBlock, MdPayments
 } from "react-icons/md";
 
+const extractItems = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === "object") {
+    const candidates = [value.items, value.cart, value.cartItems, value.products, value.order_items];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) return candidate;
+    }
+  }
+  return value;
+};
+
+const normalizeItems = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      return extractItems(JSON.parse(raw));
+    } catch {
+      return raw;
+    }
+  }
+  return extractItems(raw);
+};
+
+const getItemName = (item) => item?.productName || item?.name || item?.title || "Product";
+const getItemQty = (item) => Number(item?.qty ?? item?.quantity ?? item?.count ?? 1);
+const getItemPrice = (item) => Number(item?.price ?? item?.unit_price ?? item?.unitPrice ?? item?.sale_price ?? item?.rate ?? 0);
+const getItemTotal = (item) => Number(item?.total ?? item?.line_total ?? item?.amount ?? (getItemQty(item) * getItemPrice(item)));
+const normalizePhone = (value = "") => value.replace(/\D/g, "").replace(/^91/, "").slice(-10);
+
 function Orders() {
   /* =======================
       STATE MANAGEMENT
@@ -14,6 +45,7 @@ function Orders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [categories, setCategories] = useState(() => {
     const saved = localStorage.getItem("categories");
     return saved ? JSON.parse(saved) : ["General", "Hygienic", "Comfort"];
@@ -27,6 +59,7 @@ function Orders() {
   const [showQuickProductModal, setShowQuickProductModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [currentOrderId, setCurrentOrderId] = useState(null);
+  const [editOriginal, setEditOriginal] = useState(null);
 
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -34,6 +67,7 @@ function Orders() {
   const [orderForm, setOrderForm] = useState({
     customer: "",
     phone: "",
+    email: "",
     items: [], 
     status: "New",
     payment_status: "Pending", // New Field
@@ -58,6 +92,7 @@ function Orders() {
   useEffect(() => {
     fetchOrders();
     fetchProducts();
+    fetchCustomers();
   }, []);
 
   useEffect(() => { localStorage.setItem("products", JSON.stringify(products)); }, [products]);
@@ -73,6 +108,13 @@ function Orders() {
     if (!error && data) setProducts(data);
   };
 
+  const fetchCustomers = async () => {
+    const { data, error } = await supabase
+      .from("customers")
+      .select("id, customer_name, email, phone");
+    if (!error && data) setCustomers(data);
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
     try {
@@ -86,14 +128,42 @@ function Orders() {
           created_at,
           customer_name,
           phone_number,
+          email,
           is_approved,
           payment_status,
           payment_method
         `) 
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setOrders(data || []);
+      if (!error) {
+        setOrders(data || []);
+        return;
+      }
+
+      // Fallback if `email` column doesn't exist in orders table
+      if (String(error.message || "").toLowerCase().includes("column") && String(error.message || "").toLowerCase().includes("email")) {
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from("orders")
+          .select(`
+            id,
+            items,
+            total_price,
+            status,
+            created_at,
+            customer_name,
+            phone_number,
+            is_approved,
+            payment_status,
+            payment_method
+          `)
+          .order("created_at", { ascending: false });
+
+        if (fallbackError) throw fallbackError;
+        setOrders(fallbackData || []);
+        return;
+      }
+
+      throw error;
     } catch (error) {
       console.error("Fetch orders failed", error);
     } finally {
@@ -173,6 +243,37 @@ function Orders() {
     }
   };
 
+  const upsertCustomerFromOrder = async (form) => {
+    const phone = normalizePhone(form.phone || "");
+    const email = (form.email || "").trim();
+    const name = (form.customer || "").trim();
+
+    if (!phone && !email && !name) return;
+
+    let findQuery = supabase.from("customers").select("id").limit(1);
+    if (phone && email) {
+      findQuery = findQuery.or(`phone.eq.${phone},email.eq.${email}`);
+    } else if (phone) {
+      findQuery = findQuery.eq("phone", phone);
+    } else if (email) {
+      findQuery = findQuery.eq("email", email);
+    }
+
+    const { data: existing, error: findError } = await findQuery;
+    if (findError) return;
+
+    const payload = {};
+    if (name) payload.customer_name = name;
+    if (phone) payload.phone = phone;
+    if (email) payload.email = email;
+
+    if (existing && existing.length > 0) {
+      await supabase.from("customers").update(payload).eq("id", existing[0].id);
+    } else {
+      await supabase.from("customers").insert([{ ...payload, total_orders: 0, total_spend: 0 }]);
+    }
+  };
+
   const handleCustomerSearch = async (val) => {
     setOrderForm({ ...orderForm, customer: val });
     
@@ -184,7 +285,7 @@ function Orders() {
 
     const { data, error } = await supabase
       .from("customers")
-      .select("customer_name, phone")
+      .select("customer_name, phone, email")
       .ilike("customer_name", `%${val}%`)
       .limit(5);
 
@@ -199,7 +300,8 @@ function Orders() {
     setOrderForm({
       ...orderForm,
       customer: cust.customer_name,
-      phone: cleanPhone
+      phone: cleanPhone,
+      email: cust.email || ""
     });
     setShowSuggestions(false);
   };
@@ -238,36 +340,99 @@ function Orders() {
   const saveOrder = async (e) => {
     e.preventDefault();
 
-    if (orderForm.phone.length !== 10) {
+    if (!isEditing && orderForm.phone.length !== 10) {
       alert("Please enter a 10-digit phone number.");
       return;
     }
 
     try {
-      const orderPayload = {
-        customer_name: orderForm.customer,
-        phone_number: "+91" + orderForm.phone.replace("+91", "").trim(),
-        items: orderForm.items, 
-        total_price: orderGrandTotal,
-        status: orderForm.status,
-        payment_status: orderForm.payment_status,
-        payment_method: orderForm.payment_method
-      };
-
       if (isEditing && currentOrderId) {
+        const updatePayload = {};
+        const original = editOriginal || {};
+
+        const originalName = (original.customer_name || "").trim();
+        const originalPhone = normalizePhone(original.phone_number || "");
+        const originalEmail = (original.email || original.customer_email || "").trim();
+        const originalItems = Array.isArray(normalizeItems(original.items)) ? normalizeItems(original.items) : [];
+        const originalStatus = original.status || "New";
+        const originalPaymentStatus = original.payment_status || "Pending";
+        const originalPaymentMethod = original.payment_method || "Cash";
+
+        if ((orderForm.customer || "").trim() !== originalName) {
+          updatePayload.customer_name = (orderForm.customer || "").trim();
+        }
+
+        const nextPhone = normalizePhone(orderForm.phone || "");
+        if (nextPhone && nextPhone !== originalPhone) {
+          if (nextPhone.length !== 10) {
+            alert("Please enter a 10-digit phone number.");
+            return;
+          }
+          updatePayload.phone_number = "+91" + nextPhone;
+        }
+
+        const nextEmail = (orderForm.email || "").trim();
+        if (nextEmail !== originalEmail) {
+          updatePayload.email = nextEmail || null;
+        }
+
+        if (JSON.stringify(orderForm.items || []) !== JSON.stringify(originalItems)) {
+          updatePayload.items = orderForm.items || [];
+          updatePayload.total_price = orderGrandTotal;
+        }
+
+        if (orderForm.status !== originalStatus) updatePayload.status = orderForm.status;
+        if (orderForm.payment_status !== originalPaymentStatus) updatePayload.payment_status = orderForm.payment_status;
+        if (orderForm.payment_method !== originalPaymentMethod) updatePayload.payment_method = orderForm.payment_method;
+
+        if (Object.keys(updatePayload).length === 0) {
+          alert("No changes to save.");
+          return;
+        }
+
         const { error: updateError } = await supabase
           .from("orders")
-          .update(orderPayload)
+          .update(updatePayload)
           .eq("id", currentOrderId);
-        if (updateError) throw updateError;
+        if (!updateError) {
+          // ok
+        } else if (String(updateError.message || "").toLowerCase().includes("column") && String(updateError.message || "").toLowerCase().includes("email")) {
+          const { error: retryError } = await supabase
+            .from("orders")
+            .update({ ...updatePayload, email: undefined })
+            .eq("id", currentOrderId);
+          if (retryError) throw retryError;
+        } else {
+          throw updateError;
+        }
       } else {
+        const orderPayload = {
+          customer_name: orderForm.customer,
+          phone_number: "+91" + orderForm.phone.replace("+91", "").trim(),
+          email: orderForm.email || null,
+          items: orderForm.items,
+          total_price: orderGrandTotal,
+          status: orderForm.status,
+          payment_status: orderForm.payment_status,
+          payment_method: orderForm.payment_method
+        };
         const { error: insertError } = await supabase
           .from("orders")
           .insert([orderPayload]);
-        if (insertError) throw insertError;
+        if (!insertError) {
+          // ok
+        } else if (String(insertError.message || "").toLowerCase().includes("column") && String(insertError.message || "").toLowerCase().includes("email")) {
+          const { error: retryError } = await supabase
+            .from("orders")
+            .insert([{ ...orderPayload, email: undefined }]);
+          if (retryError) throw retryError;
+        } else {
+          throw insertError;
+        }
       }
 
       await fetchOrders();
+      await upsertCustomerFromOrder(orderForm);
       resetOrderForm();
       setShowOrderModal(false);
       alert(isEditing ? "Order Updated!" : "Order Authorized!");
@@ -280,6 +445,7 @@ function Orders() {
     setOrderForm({ 
         customer: "", 
         phone: "", 
+        email: "",
         items: [], 
         status: "New",
         payment_status: "Pending",
@@ -287,23 +453,20 @@ function Orders() {
     });
     setIsEditing(false);
     setCurrentOrderId(null);
+    setEditOriginal(null);
   };
 
   const openEditModal = (order) => {
     setIsEditing(true);
     setCurrentOrderId(order.id);
+    setEditOriginal(order);
     
-    let editableItems = [];
-    try {
-        const rawItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-        editableItems = Array.isArray(rawItems) ? rawItems : [];
-    } catch (e) {
-        editableItems = [];
-    }
+    const editableItems = Array.isArray(normalizeItems(order.items)) ? normalizeItems(order.items) : [];
 
     setOrderForm({
       customer: order.customer_name || "",
       phone: (order.phone_number || "").replace("+91", "").trim(),
+      email: order.email || order.customer_email || "",
       status: order.status || "New",
       payment_status: order.payment_status || "Pending",
       payment_method: order.payment_method || "Cash",
@@ -320,19 +483,25 @@ function Orders() {
     
     let itemsHtml = "";
     try {
-        const rawItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-        if (Array.isArray(rawItems)) {
-            itemsHtml = rawItems.map((item, index) => `
-              <tr>
-                <td style="padding: 15px; border-bottom: 1px solid #edf2f7; text-align: center; color: #718096;">${index + 1}</td>
-                <td style="padding: 15px; border-bottom: 1px solid #edf2f7;">
-                  <div style="font-weight: 700; color: #2d3748; font-size: 14px;">${item.productName || item.name || 'Product'}</div>
-                </td>
-                <td style="padding: 15px; border-bottom: 1px solid #edf2f7; text-align: center; font-weight: 600; color: #4a5568;">${item.qty} PCS</td>
-                <td style="padding: 15px; border-bottom: 1px solid #edf2f7; text-align: right; color: #4a5568;">₹${Number(item.price || 0).toLocaleString('en-IN')}</td>
-                <td style="padding: 15px; border-bottom: 1px solid #edf2f7; text-align: right; font-weight: 700; color: #1a365d;">₹${Number(item.total || item.qty * item.price || 0).toLocaleString('en-IN')}</td>
-              </tr>
-            `).join('');
+        const parsedItems = normalizeItems(order.items);
+        if (Array.isArray(parsedItems)) {
+            if (parsedItems.length === 0) {
+              itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #64748b;">No items found</td></tr>`;
+            } else {
+              itemsHtml = parsedItems.map((item, index) => `
+                <tr>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: center; color: #718096; width: 6%;">${index + 1}</td>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; width: 54%;">
+                    <div style="font-weight: 700; color: #2d3748; font-size: 14px; line-height: 1.3;">${getItemName(item)}</div>
+                  </td>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: center; font-weight: 600; color: #4a5568; width: 12%;">${getItemQty(item)}</td>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: right; color: #4a5568; width: 14%;">???${Number(getItemPrice(item) || 0).toLocaleString('en-IN')}</td>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: right; font-weight: 700; color: #1a365d; width: 14%;">???${Number(getItemTotal(item) || 0).toLocaleString('en-IN')}</td>
+                </tr>
+              `).join('');
+            }
+        } else if (typeof parsedItems === "string") {
+            itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #64748b;">${parsedItems}</td></tr>`;
         }
     } catch (e) {
         itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center;">${order.items}</td></tr>`;
@@ -354,8 +523,9 @@ function Orders() {
           .info-row { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px; background: #f8fafc; padding: 30px; border-radius: 15px; }
           .info-box h4 { margin: 0 0 10px 0; font-size: 11px; text-transform: uppercase; color: #3b82f6; letter-spacing: 1.5px; }
           .info-box p { margin: 3px 0; font-weight: 700; font-size: 16px; color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-          th { background: #1e3a8a; color: white; text-align: left; padding: 15px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; table-layout: fixed; }
+          th { background: #1e3a8a; color: white; text-align: left; padding: 14px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+          td { font-size: 12px; }
           .total-section { border-top: 2px solid #e2e8f0; padding-top: 20px; display: flex; justify-content: flex-end; }
           .total-pill { background: #1e3a8a; color: white; padding: 20px 40px; border-radius: 15px; font-size: 22px; font-weight: 800; }
           .footer { margin-top: 60px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #edf2f7; padding-top: 20px; }
@@ -391,6 +561,13 @@ function Orders() {
           </div>
 
           <table>
+            <colgroup>
+              <col style="width: 6%;">
+              <col style="width: 54%;">
+              <col style="width: 12%;">
+              <col style="width: 14%;">
+              <col style="width: 14%;">
+            </colgroup>
             <thead>
               <tr>
                 <th style="text-align: center; border-radius: 10px 0 0 0;">#</th>
@@ -434,10 +611,22 @@ function Orders() {
     return orders.filter(o => {
       const customerName = (o.customer_name || "").toLowerCase();
       const customerPhone = (o.phone_number || "");
+      const customerEmail = (o.email || o.customer_email || "");
+      const customerMatch = customers.find(c => {
+        const phoneMatch = normalizePhone(c.phone) && normalizePhone(o.phone_number) && normalizePhone(c.phone) === normalizePhone(o.phone_number);
+        const emailMatch = (c.email || "").toLowerCase() && (c.email || "").toLowerCase() === customerEmail.toLowerCase();
+        return phoneMatch || emailMatch;
+      });
+      const fallbackPhone = customerMatch?.phone ? `+91 ${customerMatch.phone}` : "";
+      const fallbackEmail = customerMatch?.email || "";
       const search = searchTerm.toLowerCase();
-      return customerName.includes(search) || customerPhone.includes(search);
+      return customerName.includes(search)
+        || customerPhone.includes(search)
+        || customerEmail.toLowerCase().includes(search)
+        || fallbackPhone.includes(search)
+        || fallbackEmail.toLowerCase().includes(search);
     });
-  }, [orders, searchTerm]);
+  }, [orders, searchTerm, customers]);
 
   return (
     <AdminLayout>
@@ -468,14 +657,15 @@ function Orders() {
                 <th className="px-6 py-5 min-w-[280px]">Order Details</th>
                 <th className="px-6 py-5 text-center w-40">Payment</th>
                 <th className="px-6 py-5 text-center w-52">Status</th>
+                <th className="px-6 py-5 text-center w-40">Approval</th>
                 <th className="px-6 py-5 text-right w-36">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {loading ? (
-                <tr><td colSpan="6" className="py-20 text-center text-slate-400 font-bold text-lg italic">Fetching orders from cloud...</td></tr>
+                <tr><td colSpan="7" className="py-20 text-center text-slate-400 font-bold text-lg italic">Fetching orders from cloud...</td></tr>
               ) : filteredOrders.length === 0 ? (
-                <tr><td colSpan="6" className="py-20 text-center text-slate-400 font-bold text-lg italic">Loading.....</td></tr>
+                <tr><td colSpan="7" className="py-20 text-center text-slate-400 font-bold text-lg italic">Loading.....</td></tr>
               ) : filteredOrders.map(o => (
                 <tr key={o.id} className="hover:bg-slate-50/80 transition-all group">
                   <td className="px-6 py-8 align-top">
@@ -486,10 +676,26 @@ function Orders() {
 
                   <td className="px-6 py-8 align-top">
                     <div className="flex flex-col">
-                        <span className="font-black text-slate-900 text-lg leading-tight">{o.customer_name || 'Walking Customer'}</span>
-                        <span className="text-sm text-slate-500 font-bold mt-2">
-                            {o.phone_number}
-                        </span>
+                        {(() => {
+                          const customerMatch = customers.find(c => {
+                            const phoneMatch = normalizePhone(c.phone) && normalizePhone(o.phone_number) && normalizePhone(c.phone) === normalizePhone(o.phone_number);
+                            const emailMatch = (c.email || "").toLowerCase() && (c.email || "").toLowerCase() === (o.email || o.customer_email || "").toLowerCase();
+                            return phoneMatch || emailMatch;
+                          });
+                          const displayPhone = o.phone_number || (customerMatch?.phone ? `+91 ${customerMatch.phone}` : "—");
+                          const displayEmail = o.email || o.customer_email || customerMatch?.email || "—";
+                          return (
+                            <>
+                              <span className="font-black text-slate-900 text-lg leading-tight">{o.customer_name || customerMatch?.customer_name || 'Walking Customer'}</span>
+                              <span className="text-sm text-slate-500 font-bold mt-2">
+                                {displayPhone}
+                              </span>
+                              <span className="text-xs text-slate-400 font-bold mt-1">
+                                {displayEmail}
+                              </span>
+                            </>
+                          );
+                        })()}
                     </div>
                   </td>
 
@@ -498,24 +704,28 @@ function Orders() {
                        {(() => {
                         try {
                             if (!o.items) return <span className="text-xs text-slate-400 italic">Empty Order</span>;
-                            const parsed = typeof o.items === 'string' ? (o.items.startsWith('[') ? JSON.parse(o.items) : o.items) : o.items;
+                            const parsed = normalizeItems(o.items);
                             
                             if (Array.isArray(parsed)) {
+                                if (parsed.length === 0) return <span className="text-xs text-slate-400 italic">Empty Order</span>;
                                 return parsed.map((item, i) => (
                                     <div key={i} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 max-w-sm">
                                         <span className="font-black text-slate-900 text-sm leading-tight">
-                                            {item.productName || item.name}
+                                            {getItemName(item)}
                                         </span>
                                         <div className="flex items-center gap-3">
-                                            <span className="text-[10px] text-slate-400 font-bold">₹{item.price}</span>
+                                            <span className="text-[10px] text-slate-400 font-bold">?{getItemPrice(item)}</span>
                                             <span className="font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded text-sm">
-                                                x{item.qty}
+                                                x{getItemQty(item)}
                                             </span>
                                         </div>
                                     </div>
                                 ));
                             }
-                            return <span className="font-black text-slate-900 text-base leading-tight">{parsed}</span>;
+                            if (typeof parsed === "string") {
+                              return <span className="font-black text-slate-900 text-base leading-tight">{parsed}</span>;
+                            }
+                            return <span className="text-xs text-slate-400 italic">No item details</span>;
                         } catch(e) { return <span className="text-xs text-rose-500 italic">Data Parsing Error</span>; }
                        })()}
                     </div>
@@ -545,6 +755,33 @@ function Orders() {
                       ))}
                       {o.status === "Cancelled" && <option value="Cancelled">Cancelled</option>}
                     </select>
+                  </td>
+
+                  <td className="px-6 py-8 align-top text-center">
+                    {o.status === "Cancelled" ? (
+                      <span className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-100 text-rose-600 inline-block">
+                        Cancelled
+                      </span>
+                    ) : o.is_approved ? (
+                      <span className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-600 inline-block">
+                        Approved
+                      </span>
+                    ) : (
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleOrderApproval(o.id, true)}
+                          className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-all"
+                        >
+                          <MdCheck size={14} /> Approve
+                        </button>
+                        <button
+                          onClick={() => handleOrderApproval(o.id, false)}
+                          className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 bg-rose-600 text-white hover:bg-rose-700 transition-all"
+                        >
+                          <MdBlock size={14} /> Cancel
+                        </button>
+                      </div>
+                    )}
                   </td>
 
                   <td className="px-6 py-8 align-top text-right">
@@ -584,9 +821,9 @@ function Orders() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="relative">
                     <input 
-                      required 
+                      required={!isEditing}
                       placeholder="Customer Name" 
-                      className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold" 
+                      className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold text-slate-800 placeholder:text-slate-400" 
                       value={orderForm.customer} 
                       onChange={e => handleCustomerSearch(e.target.value)}
                       onFocus={() => orderForm.customer.length >= 2 && setShowSuggestions(true)}
@@ -605,8 +842,19 @@ function Orders() {
                 </div>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">+91</span>
-                  <input required type="tel" placeholder="Phone Number" className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl pl-14 pr-6 outline-none font-bold" value={orderForm.phone} onChange={e => setOrderForm({ ...orderForm, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} />
+                  <input required={!isEditing} type="tel" placeholder="Phone Number" className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl pl-14 pr-6 outline-none font-bold text-slate-800 placeholder:text-slate-400" value={orderForm.phone} onChange={e => setOrderForm({ ...orderForm, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} />
                 </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-1 block">Email</label>
+                <input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={orderForm.email}
+                  onChange={(e) => setOrderForm({ ...orderForm, email: e.target.value })}
+                  className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold text-slate-800 placeholder:text-slate-400"
+                />
               </div>
 
               {/* PAYMENT DROPDOWNS */}
@@ -614,7 +862,7 @@ function Orders() {
                 <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Payment Status</label>
                     <select 
-                        className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold"
+                        className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold text-slate-800"
                         value={orderForm.payment_status}
                         onChange={e => setOrderForm({...orderForm, payment_status: e.target.value})}
                     >
@@ -624,7 +872,7 @@ function Orders() {
                 <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Payment Method</label>
                     <select 
-                        className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold"
+                        className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold text-slate-800"
                         value={orderForm.payment_method}
                         onChange={e => setOrderForm({...orderForm, payment_method: e.target.value})}
                     >
@@ -634,7 +882,7 @@ function Orders() {
               </div>
 
               <div className="p-6 bg-slate-50 rounded-3xl border-2 border-slate-100 space-y-4">
-                <select className="w-full h-14 bg-white border-2 border-slate-100 rounded-2xl px-6 outline-none font-bold" onChange={e => { if(e.target.value) addProductToOrder(e.target.value); e.target.value = ""; }}>
+                <select className="w-full h-14 bg-white border-2 border-slate-100 rounded-2xl px-6 outline-none font-bold text-slate-800" onChange={e => { if(e.target.value) addProductToOrder(e.target.value); e.target.value = ""; }}>
                   <option value="">Search and Add Product...</option>
                   {products.map(p => <option key={p.id} value={p.id}>{p.name} - ₹{p.price}</option>)}
                 </select>
@@ -694,16 +942,20 @@ function Orders() {
               <div className="space-y-2 border-y py-6 my-2">
                 {(() => {
                   try {
-                    const parsed = typeof selectedOrder.items === 'string' ? (selectedOrder.items.startsWith('[') ? JSON.parse(selectedOrder.items) : selectedOrder.items) : selectedOrder.items;
+                    const parsed = normalizeItems(selectedOrder.items);
                     if (Array.isArray(parsed)) {
+                        if (parsed.length === 0) return <div className="text-sm font-bold text-slate-400">No items found</div>;
                         return parsed.map((item, i) => (
                           <div key={i} className="flex justify-between text-base py-1">
-                            <span className="font-bold text-slate-700">{item.productName || item.name} <span className="text-slate-400 ml-1">x{item.qty}</span></span>
-                            <span className="font-black text-slate-900">₹{Number(item.total || item.qty * item.price || 0).toLocaleString()}</span>
+                            <span className="font-bold text-slate-700">{getItemName(item)} <span className="text-slate-400 ml-1">x{getItemQty(item)}</span></span>
+                            <span className="font-black text-slate-900">???{Number(getItemTotal(item) || 0).toLocaleString()}</span>
                           </div>
                         ));
                     }
-                    return <div className="text-sm font-bold text-blue-700">{parsed}</div>;
+                    if (typeof parsed === "string") {
+                      return <div className="text-sm font-bold text-blue-700">{parsed}</div>;
+                    }
+                    return <div className="text-sm font-bold text-slate-400">No item details</div>;
                   } catch(e) { return <div className="text-sm font-bold text-slate-400">Error loading items</div>; }
                 })()}
               </div>

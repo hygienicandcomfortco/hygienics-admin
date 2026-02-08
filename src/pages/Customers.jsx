@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import AdminLayout from "../components/AdminLayout";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../utils/supabase";
 import {
   MdPeople,
   MdAdd,
@@ -20,15 +20,22 @@ function Customers() {
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [editOriginal, setEditOriginal] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("recent");
 
   const [form, setForm] = useState({
     customer_name: "",
+    email: "",
     phone: "",
     total_spend: 0,
     total_orders: 0
   });
+
+  const normalizePhone = (value = "") => value.replace(/\D/g, "").replace(/^91/, "").slice(-10);
+  const normalizeEmail = (value = "") => value.trim().toLowerCase();
+
+  const [orders, setOrders] = useState([]);
 
   /* =======================
       RESTRICTION LOGIC
@@ -53,8 +60,28 @@ function Customers() {
     setLoading(false);
   };
 
+  const fetchOrdersForTotals = async () => {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, total_price, phone_number, email, customer_email");
+
+    if (!error && data) {
+      setOrders(data || []);
+      return;
+    }
+
+    // Fallback if `email` column doesn't exist in orders table
+    if (String(error?.message || "").toLowerCase().includes("column") && String(error?.message || "").toLowerCase().includes("email")) {
+      const { data: fallbackData } = await supabase
+        .from("orders")
+        .select("id, total_price, phone_number, customer_email");
+      setOrders(fallbackData || []);
+    }
+  };
+
   useEffect(() => {
     fetchCustomers();
+    fetchOrdersForTotals();
   }, []);
 
   /* =======================
@@ -64,8 +91,10 @@ function Customers() {
     if (cust) {
       setIsEditing(true);
       setEditId(cust.id);
+      setEditOriginal(cust);
       setForm({
         customer_name: cust.customer_name || "",
+        email: cust.email || "",
         phone: cust.phone || "",
         total_orders: Number(cust.total_orders) || 0,
         total_spend: Number(cust.total_spend) || 0,
@@ -73,14 +102,46 @@ function Customers() {
     } else {
       setIsEditing(false);
       setEditId(null);
+      setEditOriginal(null);
       setForm({
         customer_name: "",
+        email: "",
         phone: "",
         total_orders: 0,
         total_spend: 0,
       });
     }
     setShowModal(true);
+  };
+
+  const syncOrdersFromCustomer = async (original, updated) => {
+    const oldPhone = normalizePhone(original?.phone || updated.phone || "");
+    const oldEmail = (original?.email || updated.email || "").trim();
+    const newPhone = normalizePhone(updated.phone || "");
+    const newEmail = (updated.email || "").trim();
+
+    const filters = [];
+    if (oldPhone) filters.push(`phone_number.ilike.%${oldPhone}`);
+    if (oldEmail) filters.push(`email.eq.${oldEmail}`);
+    if (filters.length === 0) return;
+
+    const orderPayload = {
+      customer_name: updated.customer_name,
+      phone_number: newPhone ? `+91${newPhone}` : null,
+      email: newEmail || null,
+    };
+
+    const { error } = await supabase
+      .from("orders")
+      .update(orderPayload)
+      .or(filters.join(","));
+
+    if (error && String(error.message || "").toLowerCase().includes("column") && String(error.message || "").toLowerCase().includes("email")) {
+      await supabase
+        .from("orders")
+        .update({ ...orderPayload, email: undefined })
+        .or(filters.join(","));
+    }
   };
 
   const handleSave = async (e) => {
@@ -94,6 +155,7 @@ function Customers() {
     
     const payload = {
         customer_name: form.customer_name,
+        email: form.email || null,
         phone: form.phone,
         total_orders: Number(form.total_orders),
         total_spend: Number(form.total_spend)
@@ -105,6 +167,7 @@ function Customers() {
         .update(payload)
         .eq("id", editId);
       if (error) return alert(error.message);
+      await syncOrdersFromCustomer(editOriginal, payload);
     } else {
       const { error } = await supabase
         .from("customers")
@@ -129,12 +192,102 @@ function Customers() {
       FILTER & SORT
   ======================= */
   const processedCustomers = useMemo(() => {
-    let list = [...customers];
+    if (!customers || customers.length === 0) return [];
+
+    // 1) Union-Find to group customers by matching phone OR email
+    const parent = new Map();
+    const find = (x) => {
+      const p = parent.get(x);
+      if (p !== x) parent.set(x, find(p));
+      return parent.get(x);
+    };
+    const union = (a, b) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent.set(rb, ra);
+    };
+
+    const phoneToId = new Map();
+    const emailToId = new Map();
+
+    customers.forEach((c) => parent.set(c.id, c.id));
+
+    customers.forEach((c) => {
+      const phoneKey = normalizePhone(c.phone || "");
+      const emailKey = normalizeEmail(c.email || "");
+
+      if (phoneKey) {
+        if (phoneToId.has(phoneKey)) union(c.id, phoneToId.get(phoneKey));
+        else phoneToId.set(phoneKey, c.id);
+      }
+      if (emailKey) {
+        if (emailToId.has(emailKey)) union(c.id, emailToId.get(emailKey));
+        else emailToId.set(emailKey, c.id);
+      }
+    });
+
+    const groups = new Map();
+    customers.forEach((c) => {
+      const root = find(c.id);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(c);
+    });
+
+    // 2) Build key -> group map for orders aggregation
+    const keyToGroup = new Map();
+    Array.from(groups.values()).forEach((group, index) => {
+      group.forEach((c) => {
+        const phoneKey = normalizePhone(c.phone || "");
+        const emailKey = normalizeEmail(c.email || "");
+        if (phoneKey) keyToGroup.set(`p:${phoneKey}`, index);
+        if (emailKey) keyToGroup.set(`e:${emailKey}`, index);
+      });
+    });
+
+    const groupTotals = Array.from(groups.values()).map(() => ({
+      orderIds: new Set(),
+      total_orders: 0,
+      total_spend: 0
+    }));
+
+    (orders || []).forEach((o) => {
+      const phoneKey = normalizePhone(o.phone_number || "");
+      const emailKey = normalizeEmail(o.email || o.customer_email || "");
+
+      const phoneGroup = phoneKey ? keyToGroup.get(`p:${phoneKey}`) : undefined;
+      const emailGroup = emailKey ? keyToGroup.get(`e:${emailKey}`) : undefined;
+      const groupIndex = phoneGroup ?? emailGroup;
+      if (groupIndex === undefined) return;
+
+      const g = groupTotals[groupIndex];
+      if (!g.orderIds.has(o.id)) {
+        g.orderIds.add(o.id);
+        g.total_orders += 1;
+        g.total_spend += Number(o.total_price || 0);
+      }
+    });
+
+    // 3) Build merged customer list
+    let list = Array.from(groups.values()).map((group, index) => {
+      const primary = [...group].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+      const fallbackOrders = group.reduce((sum, c) => sum + Number(c.total_orders || 0), 0);
+      const fallbackSpend = group.reduce((sum, c) => sum + Number(c.total_spend || 0), 0);
+      const totals = groupTotals[index];
+
+      return {
+        ...primary,
+        total_orders: totals.total_orders > 0 ? totals.total_orders : fallbackOrders,
+        total_spend: totals.total_spend > 0 ? totals.total_spend : fallbackSpend,
+        phone: primary.phone || group.find((c) => c.phone)?.phone || "",
+        email: primary.email || group.find((c) => c.email)?.email || ""
+      };
+    });
 
     if (searchTerm) {
       list = list.filter((c) =>
         c.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.phone?.includes(searchTerm)
+        c.phone?.includes(searchTerm) ||
+        c.email?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
@@ -172,7 +325,7 @@ function Customers() {
         <div className="relative flex-1">
           <MdSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
           <input
-            placeholder="Search name or phone..."
+            placeholder="Search name, phone, or email..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-800 border-none text-white font-bold focus:ring-2 focus:ring-blue-600 outline-none"
@@ -209,7 +362,8 @@ function Customers() {
               className="bg-white p-8 rounded-[35px] shadow-xl border border-slate-100 hover:scale-[1.02] transition-transform"
             >
               <h3 className="font-black text-2xl text-slate-900 mb-1">{c.customer_name}</h3>
-              <p className="text-slate-400 text-sm font-bold mb-6">+91 {c.phone}</p>
+              <p className="text-slate-400 text-sm font-bold">+91 {c.phone}</p>
+              <p className="text-slate-400 text-xs font-bold mb-6">{c.email || "—"}</p>
 
               <div className="grid grid-cols-2 gap-4 mb-8">
                 <div className="bg-slate-50 p-4 rounded-2xl">
@@ -275,7 +429,18 @@ function Customers() {
                   placeholder="e.g. John Doe"
                   value={form.customer_name}
                   onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
-                  className="w-full p-4 bg-slate-50 border-2 border-slate-50 rounded-2xl font-bold focus:border-blue-600 outline-none transition-all"
+                  className="w-full p-4 bg-slate-50 border-2 border-slate-50 rounded-2xl font-bold text-slate-800 placeholder:text-slate-400 focus:border-blue-600 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-1 block">Email</label>
+                <input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="w-full p-4 bg-slate-50 border-2 border-slate-50 rounded-2xl font-bold text-slate-800 placeholder:text-slate-400 focus:border-blue-600 outline-none transition-all"
                 />
               </div>
 
@@ -295,7 +460,7 @@ function Customers() {
                       const val = e.target.value.replace(/\D/g, "").slice(0, 10);
                       setForm({ ...form, phone: val });
                     }}
-                    className="w-full p-4 pl-14 bg-slate-50 border-2 border-slate-50 rounded-2xl font-bold focus:border-blue-600 outline-none transition-all"
+                    className="w-full p-4 pl-14 bg-slate-50 border-2 border-slate-50 rounded-2xl font-bold text-slate-800 placeholder:text-slate-400 focus:border-blue-600 outline-none transition-all"
                   />
                 </div>
                 {/* Validation message */}

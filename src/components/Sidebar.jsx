@@ -26,9 +26,8 @@ function Sidebar() {
 
     // Close modal
     setShowLogoutConfirm(false);
-    
-    // 3. FORCE REFRESH to Login page
-    // This is the primary fix for the "white screen" issue
+
+    // IMPORTANT for GitHub Pages + HashRouter:
     window.location.href = "/#/login";
   };
 
