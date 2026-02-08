@@ -55,6 +55,7 @@ function Products() {
   const [newCategory, setNewCategory] = useState("");
   const [showMainCategoryInput, setShowMainCategoryInput] = useState(false);
   const [newMainCategory, setNewMainCategory] = useState("");
+  const [dragIndex, setDragIndex] = useState(null);
 
   // Live Calculation States
   const [calcQty, setCalcQty] = useState(0);
@@ -99,6 +100,54 @@ function Products() {
   /* =======================
       IMAGE HELPERS
   ======================= */
+  const buildImageCandidates = (rawUrl) => {
+    const url = (rawUrl || "").trim();
+    if (!url) return [PLACEHOLDER];
+
+    const candidates = [];
+    const pushUnique = (u) => {
+      if (u && !candidates.includes(u)) candidates.push(u);
+    };
+
+    // Google Drive: extract file id from common patterns
+    const idMatch =
+      url.match(/\/file\/d\/([^/]+)/) ||
+      url.match(/[?&]id=([^&]+)/) ||
+      url.match(/drive\.google\.com\/thumbnail\?id=([^&]+)/) ||
+      url.match(/drive\.google\.com\/uc\?export=[^&]+&id=([^&]+)/);
+
+    if (idMatch && idMatch[1]) {
+      const id = idMatch[1];
+      pushUnique(`https://drive.google.com/thumbnail?id=${id}&sz=w800`);
+      pushUnique(`https://drive.google.com/uc?export=view&id=${id}`);
+      pushUnique(`https://drive.google.com/uc?export=download&id=${id}`);
+      return candidates;
+    }
+
+    pushUnique(url);
+    return candidates;
+  };
+
+  const ImageWithFallback = ({ src, alt, className }) => {
+    const [index, setIndex] = useState(0);
+    const candidates = useMemo(() => buildImageCandidates(src), [src]);
+    const current = candidates[index] || PLACEHOLDER;
+
+    return (
+      <img
+        src={current}
+        alt={alt}
+        className={className}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => {
+          if (index < candidates.length - 1) setIndex(index + 1);
+          else setIndex(candidates.length);
+        }}
+      />
+    );
+  };
+
   const normalizeImageUrl = (rawUrl) => {
     const url = (rawUrl || "").trim();
     if (!url) return "";
@@ -129,6 +178,16 @@ function Products() {
 
   const removeImageFromForm = (index) => {
     setForm(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== index) }));
+  };
+
+  const moveImage = (fromIndex, toIndex) => {
+    if (fromIndex === null || toIndex === null || fromIndex === toIndex) return;
+    setForm((prev) => {
+      const next = [...prev.images];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return { ...prev, images: next };
+    });
   };
 
   /* =======================
@@ -312,7 +371,7 @@ function Products() {
               return (
                 <div key={p.id} className="grid grid-cols-12 items-center p-6 group hover:bg-slate-50/50 transition-all">
                   <div className="col-span-1 flex justify-center">
-                      <img src={p.images?.[0] || PLACEHOLDER} className="w-14 h-14 object-cover rounded-2xl border border-slate-200 shadow-sm" alt="" />
+                      <ImageWithFallback src={p.images?.[0] || PLACEHOLDER} className="w-14 h-14 object-cover rounded-2xl border border-slate-200 shadow-sm" alt="" />
                   </div>
                   <div className="col-span-5 px-4">
                       <p className="font-black text-slate-900 text-base tracking-tight leading-tight">{p.name}</p>
@@ -456,8 +515,20 @@ function Products() {
                 </div>
                 <div className="flex gap-2 mt-2 flex-wrap">
                   {form.images.map((img, idx) => (
-                    <div key={idx} className="relative w-16 h-16 group">
-                      <img src={img} className="w-full h-full object-cover rounded-lg border" alt="" />
+                    <div
+                      key={idx}
+                      className="relative w-16 h-16 group cursor-move"
+                      draggable
+                      onDragStart={() => setDragIndex(idx)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => {
+                        moveImage(dragIndex, idx);
+                        setDragIndex(null);
+                      }}
+                      onDragEnd={() => setDragIndex(null)}
+                      title="Drag to reorder"
+                    >
+                      <ImageWithFallback src={img} className="w-full h-full object-cover rounded-lg border" alt="" />
                       <button 
                         type="button" 
                         onClick={() => removeImageFromForm(idx)}
