@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom"; 
 import AdminLayout from "../components/AdminLayout";
-import { supabase } from "../lib/supabase"; 
+import { supabase } from "../utils/supabase"; 
 import { 
   MdInventory, 
   MdWarning, 
@@ -30,11 +30,20 @@ function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const { data: products } = await supabase.from("products").select("*");
-      const { data: orders } = await supabase
+      const { data: products, error: productsError } = await supabase
+        .from("products")
+        .select("*");
+      const { data: orders, error: ordersError } = await supabase
         .from("orders")
-        .select("*, customers(customer_name)")
+        .select("id, total_price, created_at, customer_name")
         .order("created_at", { ascending: false });
+
+      if (productsError) {
+        console.error("Dashboard products error:", productsError);
+      }
+      if (ordersError) {
+        console.error("Dashboard orders error:", ordersError);
+      }
 
       if (products && orders) {
         // Calculation logic for total stock value
@@ -44,8 +53,8 @@ function Dashboard() {
             return acc + (price * qty);
         }, 0);
 
-        const lowStock = products.filter(p => Number(p.stock) <= 5).length;
-        const totalRev = orders.reduce((acc, o) => acc + Number(o.total || 0), 0);
+        const lowStock = products.filter(p => Number(p.stock) <= Number(p.min_stock || 5)).length;
+        const totalRev = orders.reduce((acc, o) => acc + Number(o.total_price || 0), 0);
 
         setStats({
           totalProducts: products.length,
@@ -161,7 +170,7 @@ function Dashboard() {
                     </span>
                   </div>
                   <p className="text-slate-500 text-[10px] font-black uppercase mt-1">
-                    Customer: {order.customers?.customer_name || 'Walk-in'} • Amount: {isAdmin ? `₹${order.total}` : "₹ ****"}
+                    Customer: {order.customer_name || 'Walk-in'} • Amount: {isAdmin ? `₹${order.total_price || 0}` : "₹ ****"}
                   </p>
                 </div>
                 <span className="text-slate-600 text-[10px] font-black uppercase">
