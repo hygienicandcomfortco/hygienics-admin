@@ -44,6 +44,7 @@ function Products() {
     mainCategory: "",
     category: "", 
     price: "", 
+    mrp: "",
     purchasePrice: "", 
     stock: "", 
     minStock: 5, 
@@ -203,6 +204,7 @@ function Products() {
       main_category: form.mainCategory || null,
       category: form.category,
       price: Number(form.price),
+      mrp: Number(form.mrp || 0),
       purchase_price: Number(form.purchasePrice || 0), 
       stock: Number(form.stock || 0),
       min_stock: Number(form.minStock || 5),
@@ -267,6 +269,7 @@ function Products() {
       main_category: p.main_category || null,
       category: p.category,
       price: p.price,
+      mrp: p.mrp,
       purchase_price: p.purchase_price,
       stock: p.stock,
       barcode: p.barcode,
@@ -331,7 +334,7 @@ function Products() {
               <button 
                 onClick={() => { 
                   setIsEditing(false); 
-                  setForm({ name: "", mainCategory: "", category: "", price: "", purchasePrice: "", stock: "", minStock: 5, barcode: "", images: [], description: "" }); 
+                  setForm({ name: "", mainCategory: "", category: "", price: "", mrp: "", purchasePrice: "", stock: "", minStock: 5, barcode: "", images: [], description: "" }); 
                   setShowModal(true); 
                 }} 
                 className="h-14 bg-slate-900 text-white px-8 rounded-2xl flex items-center gap-3 hover:bg-black transition-all font-bold shadow-xl"
@@ -409,6 +412,7 @@ function Products() {
                                 mainCategory: p.main_category || "",
                                 category: p.category,
                                 price: p.price,
+                                mrp: p.mrp || "",
                                 purchasePrice: p.purchase_price,
                                 stock: p.stock,
                                 minStock: p.min_stock,
@@ -619,6 +623,12 @@ function Products() {
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Purchase Cost</label>
                   <input type="number" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center text-slate-900 placeholder-slate-500" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">MRP</label>
+                  <input type="number" value={form.mrp} onChange={(e) => setForm({ ...form, mrp: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center text-slate-900 placeholder-slate-500" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
