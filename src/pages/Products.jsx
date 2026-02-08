@@ -99,9 +99,30 @@ function Products() {
   /* =======================
       IMAGE HELPERS
   ======================= */
+  const normalizeImageUrl = (rawUrl) => {
+    const url = (rawUrl || "").trim();
+    if (!url) return "";
+
+    // Google Drive share links -> direct image links
+    // Examples:
+    // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+    // https://drive.google.com/open?id=FILE_ID
+    // https://drive.google.com/uc?id=FILE_ID
+    const idMatch =
+      url.match(/\/file\/d\/([^/]+)/) ||
+      url.match(/[?&]id=([^&]+)/);
+    if (idMatch && idMatch[1]) {
+      // Use thumbnail endpoint to avoid hotlink blocks on some Drive files
+      return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800`;
+    }
+
+    return url;
+  };
+
   const addImageToForm = () => {
     if (imageUrl.trim()) {
-      setForm(prev => ({ ...prev, images: [...prev.images, imageUrl.trim()] }));
+      const normalized = normalizeImageUrl(imageUrl);
+      setForm(prev => ({ ...prev, images: [...prev.images, normalized] }));
       setImageUrl("");
     }
   };
