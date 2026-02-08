@@ -184,5 +184,4 @@ function Dashboard() {
     </AdminLayout>
   );
 }
-
-export default Dashboard;
+export default Dashboard
