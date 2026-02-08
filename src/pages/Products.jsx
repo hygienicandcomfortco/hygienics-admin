@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../utils/supabase";
 import AdminLayout from "../components/AdminLayout";
 import { 
   MdHistory, MdDelete, MdSearch, MdAdd, 
@@ -8,6 +8,7 @@ import {
 
 const PLACEHOLDER = "https://via.placeholder.com/150?text=No+Image";
 const ITEMS_PER_PAGE = 8;
+const MAIN_CATEGORIES = ["Baby Diaper", "Adult Diaper", "Others"];
 
 function Products() {
   /* =======================
@@ -24,6 +25,7 @@ function Products() {
   const [sortOrder, setSortOrder] = useState("asc");
   const [page, setPage] = useState(1);
   const [categories, setCategories] = useState([]);
+  const [mainCategories, setMainCategories] = useState(MAIN_CATEGORIES);
 
   // Modal & Menu States
   const [showModal, setShowModal] = useState(false);
@@ -31,6 +33,7 @@ function Products() {
   const [currentProductId, setCurrentProductId] = useState(null);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [showMainCategoryManager, setShowMainCategoryManager] = useState(false);
   const [showCategoryInput, setShowCategoryInput] = useState(false);
   const [inventoryProduct, setInventoryProduct] = useState(null); 
   const [stockModal, setStockModal] = useState(null); 
@@ -38,6 +41,7 @@ function Products() {
   // Form States
   const [form, setForm] = useState({ 
     name: "", 
+    mainCategory: "",
     category: "", 
     price: "", 
     purchasePrice: "", 
@@ -49,6 +53,8 @@ function Products() {
   });
   const [imageUrl, setImageUrl] = useState("");
   const [newCategory, setNewCategory] = useState("");
+  const [showMainCategoryInput, setShowMainCategoryInput] = useState(false);
+  const [newMainCategory, setNewMainCategory] = useState("");
 
   // Live Calculation States
   const [calcQty, setCalcQty] = useState(0);
@@ -114,6 +120,7 @@ function Products() {
 
     const productData = {
       name: form.name,
+      main_category: form.mainCategory || null,
       category: form.category,
       price: Number(form.price),
       purchase_price: Number(form.purchasePrice || 0), 
@@ -177,6 +184,7 @@ function Products() {
   const cloneProduct = async (p) => {
     const { error } = await supabase.from("products").insert({
       name: `${p.name} (Copy)`,
+      main_category: p.main_category || null,
       category: p.category,
       price: p.price,
       purchase_price: p.purchase_price,
@@ -243,7 +251,7 @@ function Products() {
               <button 
                 onClick={() => { 
                   setIsEditing(false); 
-                  setForm({ name: "", category: "", price: "", purchasePrice: "", stock: "", minStock: 5, barcode: "", images: [], description: "" }); 
+                  setForm({ name: "", mainCategory: "", category: "", price: "", purchasePrice: "", stock: "", minStock: 5, barcode: "", images: [], description: "" }); 
                   setShowModal(true); 
                 }} 
                 className="h-14 bg-slate-900 text-white px-8 rounded-2xl flex items-center gap-3 hover:bg-black transition-all font-bold shadow-xl"
@@ -251,6 +259,7 @@ function Products() {
                 <MdAdd size={24} /> New Product
               </button>
             )}
+            <button onClick={() => setShowMainCategoryManager(true)} className="h-14 border border-emerald-200 px-8 rounded-2xl hover:bg-emerald-50 transition-all font-bold text-emerald-700">Main Categories</button>
             <button onClick={() => setShowCategoryManager(true)} className="h-14 border border-slate-200 px-8 rounded-2xl hover:bg-slate-50 transition-all font-bold text-slate-600">Categories</button>
           </div>
         </div>
@@ -269,7 +278,7 @@ function Products() {
 
       {/* TABLE */}
       <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 mx-4 overflow-hidden">
-        <div className="grid grid-cols-12 bg-slate-50/50 border-b border-slate-100 p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+        <div className="grid grid-cols-12 bg-slate-50/50 border-b border-slate-100 p-6 text-[10px] font-black text-slate-600 uppercase tracking-widest">
             <div className="col-span-1 text-center">Preview</div>
             <div className="col-span-5 px-4">Product Details</div>
             <div className="col-span-2 text-center">Inventory</div>
@@ -287,6 +296,11 @@ function Products() {
                   <div className="col-span-5 px-4">
                       <p className="font-black text-slate-900 text-base tracking-tight leading-tight">{p.name}</p>
                       <div className="flex items-center gap-3 mt-1">
+                        {p.main_category && (
+                          <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded">
+                            {p.main_category}
+                          </span>
+                        )}
                         <span className="text-[10px] font-bold text-blue-700 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded">{p.category}</span>
                         {p.barcode && <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[9px] font-black flex items-center gap-1"><MdQrCodeScanner size={12}/> {p.barcode}</span>}
                       </div>
@@ -312,6 +326,7 @@ function Products() {
                             onClick={() => { 
                               setForm({
                                 name: p.name,
+                                mainCategory: p.main_category || "",
                                 category: p.category,
                                 price: p.price,
                                 purchasePrice: p.purchase_price,
@@ -366,11 +381,11 @@ function Products() {
             }} className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Quantity</label>
+                  <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-1">Quantity</label>
                   <input type="number" required value={calcQty} onChange={(e) => setCalcQty(e.target.value)} className="w-full h-14 border-2 border-slate-100 rounded-2xl px-5 font-black text-lg outline-none focus:border-blue-500" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
+                  <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-1">Category</label>
                   <select value={calcReason} onChange={(e) => setCalcReason(e.target.value)} className="w-full h-14 border-2 border-slate-100 rounded-2xl px-4 font-bold outline-none bg-slate-50">
                     <option value="New Shipment">New Shipment</option>
                     <option value="Return">Return</option>
@@ -380,12 +395,12 @@ function Products() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unit Cost at Entry (₹)</label>
+                <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-1">Unit Cost at Entry (₹)</label>
                 <input type="number" step="0.01" value={calcPrice} onChange={(e) => setCalcPrice(e.target.value)} className="w-full h-14 border-2 border-slate-100 rounded-2xl px-5 font-black text-blue-600" />
               </div>
               <textarea placeholder="Notes..." value={calcNote} onChange={(e) => setCalcNote(e.target.value)} className="w-full h-24 border-2 border-slate-100 rounded-2xl p-5 font-medium text-sm outline-none" />
               <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setStockModal(null)} className="flex-1 py-4 font-black text-slate-400 uppercase tracking-widest text-xs">Cancel</button>
+                <button type="button" onClick={() => setStockModal(null)} className="flex-1 py-4 font-black text-slate-600 uppercase tracking-widest text-xs">Cancel</button>
                 <button type="submit" className={`flex-1 py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs shadow-lg ${stockModal.type === 'IN' ? 'bg-emerald-500' : 'bg-rose-500'}`}>Authorize</button>
               </div>
             </form>
@@ -397,18 +412,18 @@ function Products() {
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
           <div className="bg-white w-full max-w-xl p-10 rounded-[40px] shadow-2xl overflow-y-auto max-h-[90vh]">
-            <h3 className="text-3xl font-black text-slate-800 mb-8 uppercase tracking-tighter">{isEditing ? "Modify Item" : "Create Item"}</h3>
+            <h3 className="text-3xl font-black text-slate-800 mb-8 uppercase tracking-tighter">{isEditing ? "Modify Item" : "Add A New Product"}</h3>
             <form onSubmit={saveProduct} className="space-y-6">
               
               {/* IMAGE URL INPUT SECTION */}
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Product Images</label>
+                <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Product Images</label>
                 <div className="flex gap-2">
                   <input 
                     placeholder="Add image url" 
                     value={imageUrl} 
                     onChange={(e) => setImageUrl(e.target.value)} 
-                    className="flex-1 h-12 border-2 border-slate-100 rounded-xl px-4 font-bold outline-none bg-slate-50/50" 
+                    className="flex-1 h-12 border-2 border-slate-100 rounded-xl px-4 font-bold outline-none bg-slate-50/50 text-slate-900 placeholder-slate-500" 
                   />
                   <button 
                     type="button" 
@@ -434,55 +449,98 @@ function Products() {
                 </div>
               </div>
 
-              <input placeholder="Product Name" required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} className="w-full h-14 border-2 border-slate-100 rounded-2xl px-6 font-bold outline-none bg-slate-50/50" />
+              <input placeholder="Product Name" required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} className="w-full h-14 border-2 border-slate-100 rounded-2xl px-6 font-bold outline-none bg-slate-50/50 text-slate-900 placeholder-slate-500" />
               
               {/* NEW DESCRIPTION FIELD */}
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Description</label>
+                <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Description</label>
                 <textarea 
                   placeholder="Enter product details, specs, or notes..." 
                   value={form.description} 
                   onChange={(e) => setForm({...form, description: e.target.value})} 
-                  className="w-full h-24 border-2 border-slate-100 rounded-2xl p-4 font-medium text-sm outline-none bg-slate-50/50 resize-none focus:border-blue-500 transition-all"
+                  className="w-full h-24 border-2 border-slate-100 rounded-2xl p-4 font-medium text-sm outline-none bg-slate-50/50 resize-none focus:border-blue-500 transition-all text-slate-900 placeholder-slate-500"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <select value={form.category} required onChange={(e) => e.target.value === "__new__" ? setShowCategoryInput(true) : setForm({...form, category: e.target.value})} className="h-14 border-2 border-slate-100 rounded-2xl px-5 font-bold outline-none bg-slate-50/50">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <select
+                  value={form.mainCategory}
+                  required
+                  onChange={(e) => {
+                    if (e.target.value === "__new__") {
+                      setShowMainCategoryInput(true);
+                    } else {
+                      setShowMainCategoryInput(false);
+                      setForm({ ...form, mainCategory: e.target.value });
+                    }
+                  }}
+                  className="h-14 border-2 border-slate-100 rounded-2xl px-5 font-bold outline-none bg-slate-50/50 text-slate-900"
+                >
+                  <option value="">Main Category</option>
+                  {mainCategories.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                  <option value="__new__">+ New Main Category</option>
+                </select>
+                <select value={form.category} required onChange={(e) => e.target.value === "__new__" ? setShowCategoryInput(true) : setForm({...form, category: e.target.value})} className="h-14 border-2 border-slate-100 rounded-2xl px-5 font-bold outline-none bg-slate-50/50 text-slate-900">
                   <option value="">Category</option>
                   {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                   <option value="__new__">+ New Category</option>
                 </select>
-                <input placeholder="Barcode" value={form.barcode} onChange={(e) => setForm({...form, barcode: e.target.value})} className="h-14 border-2 border-slate-100 rounded-2xl px-6 font-bold bg-slate-50/50" />
+                <input placeholder="Barcode" value={form.barcode} onChange={(e) => setForm({...form, barcode: e.target.value})} className="h-14 border-2 border-slate-100 rounded-2xl px-6 font-bold bg-slate-50/50 text-slate-900 placeholder-slate-500" />
               </div>
+              {showMainCategoryInput && (
+                <div className="flex gap-2 p-2 bg-emerald-50 rounded-2xl border border-emerald-100">
+                  <input
+                    placeholder="Main Category Name"
+                    value={newMainCategory}
+                    onChange={(e) => setNewMainCategory(e.target.value)}
+                    className="flex-1 bg-transparent px-4 font-bold text-sm text-slate-900 placeholder-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = newMainCategory.trim();
+                      if (!trimmed) return;
+                      setForm((prev) => ({ ...prev, mainCategory: trimmed }));
+                      setMainCategories((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+                      setNewMainCategory("");
+                      setShowMainCategoryInput(false);
+                    }}
+                    className="bg-emerald-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
               {showCategoryInput && (
                 <div className="flex gap-2 p-2 bg-blue-50 rounded-2xl border border-blue-100">
-                  <input placeholder="Category Name" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="flex-1 bg-transparent px-4 font-bold text-sm" />
+                  <input placeholder="Category Name" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="flex-1 bg-transparent px-4 font-bold text-sm text-slate-900 placeholder-slate-500" />
                   <button type="button" onClick={handleAddCategory} className="bg-blue-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest">Add</button>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Sale Price</label>
-                  <input type="number" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center" />
+                  <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Sale Price</label>
+                  <input type="number" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center text-slate-900 placeholder-slate-500" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Purchase Cost</label>
-                  <input type="number" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center" />
+                  <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Purchase Cost</label>
+                  <input type="number" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center text-slate-900 placeholder-slate-500" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Stock Count</label>
-                  <input type="number" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-black bg-slate-900 text-white text-center" />
+                  <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Stock Count</label>
+                  <input type="number" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-black bg-slate-900 text-white text-center placeholder-slate-200" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase block ml-2">Low Alert Level</label>
-                  <input type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center" />
+                  <label className="text-[10px] font-black text-slate-600 uppercase block ml-2">Low Alert Level</label>
+                  <input type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} className="h-14 w-full border-2 border-slate-100 rounded-2xl px-6 font-bold text-center text-slate-900 placeholder-slate-500" />
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-6">
-                <button type="button" onClick={() => setShowModal(false)} className="px-8 font-black text-slate-400 uppercase tracking-widest text-[10px]">Discard</button>
+                <button type="button" onClick={() => setShowModal(false)} className="px-8 font-black text-slate-600 uppercase tracking-widest text-[10px]">Discard</button>
                 <button type="submit" className="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl uppercase tracking-widest text-[10px]">Save Item</button>
               </div>
             </form>
@@ -504,6 +562,24 @@ function Products() {
               ))}
             </div>
             <button onClick={() => setShowCategoryManager(false)} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest">Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Category Manager Modal */}
+      {showMainCategoryManager && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+          <div className="bg-white w-full max-w-sm rounded-[40px] p-10 shadow-2xl">
+            <h3 className="text-xl font-black text-slate-800 mb-6 text-center uppercase tracking-tight">Manage Main Categories</h3>
+            <div className="space-y-3 mb-10 max-h-60 overflow-y-auto">
+              {mainCategories.map(cat => (
+                <div key={cat} className="flex justify-between items-center p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+                  <span className="font-bold text-emerald-800">{cat}</span>
+                  <button onClick={() => setMainCategories(mainCategories.filter(c => c !== cat))} className="text-emerald-300 hover:text-rose-500 transition-colors"><MdDelete size={20} /></button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowMainCategoryManager(false)} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest">Close</button>
           </div>
         </div>
       )}
