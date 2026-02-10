@@ -9,6 +9,7 @@ import {
 const PLACEHOLDER = "https://via.placeholder.com/150?text=No+Image";
 const ITEMS_PER_PAGE = 8;
 const MAIN_CATEGORIES = ["Baby Diaper", "Adult Diaper", "Others"];
+const MAIN_CATEGORIES_STORAGE_KEY = "admin.mainCategories";
 
 function Products() {
   /* =======================
@@ -24,8 +25,18 @@ function Products() {
   const [sortBy, setSortBy] = useState(null);
   const [sortOrder, setSortOrder] = useState("asc");
   const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
   const [categories, setCategories] = useState([]);
-  const [mainCategories, setMainCategories] = useState(MAIN_CATEGORIES);
+  const [mainCategories, setMainCategories] = useState(() => {
+    try {
+      const raw = localStorage.getItem(MAIN_CATEGORIES_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch {
+      // ignore malformed storage
+    }
+    return MAIN_CATEGORIES;
+  });
 
   // Modal & Menu States
   const [showModal, setShowModal] = useState(false);
@@ -71,6 +82,11 @@ function Products() {
     fetchProducts();
     fetchCategories();
   }, []);
+
+  useEffect(() => {
+    if (!mainCategories?.length) return;
+    localStorage.setItem(MAIN_CATEGORIES_STORAGE_KEY, JSON.stringify(mainCategories));
+  }, [mainCategories]);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -311,6 +327,18 @@ function Products() {
   const paginatedProducts = filteredProducts.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
 
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, selectedCategory, stockFilter, sortBy, sortOrder]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
+
   return (
     <AdminLayout>
       <div className="flex justify-between items-center mb-6 px-4">
@@ -451,6 +479,56 @@ function Products() {
                 </div>
               );
             })}
+        </div>
+      </div>
+
+      {/* PAGINATION */}
+      <div className="flex flex-wrap items-center justify-between gap-4 mx-4 mt-6">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+          Showing {(page - 1) * ITEMS_PER_PAGE + (paginatedProducts.length ? 1 : 0)}–
+          {(page - 1) * ITEMS_PER_PAGE + paginatedProducts.length} of {filteredProducts.length}
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="h-11 px-5 rounded-2xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-all"
+          >
+            Prev
+          </button>
+          <div className="flex items-center gap-2 h-11 px-4 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Page</span>
+            <input
+              value={pageInput}
+              onChange={(e) => {
+                const onlyNums = e.target.value.replace(/[^0-9]/g, "");
+                setPageInput(onlyNums);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const target = Math.min(
+                    totalPages,
+                    Math.max(1, Number(pageInput || 1))
+                  );
+                  setPage(target);
+                }
+              }}
+              className="w-12 text-center font-black text-slate-900 bg-white border border-slate-200 rounded-xl h-8 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+            />
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              / {totalPages}
+            </span>
+          </div>
+          <div className="h-11 px-5 rounded-2xl bg-slate-900 text-white font-black text-xs uppercase tracking-widest flex items-center">
+            Page {page} / {totalPages}
+          </div>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="h-11 px-5 rounded-2xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-all"
+          >
+            Next
+          </button>
         </div>
       </div>
 
