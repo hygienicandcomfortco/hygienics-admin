@@ -12,7 +12,10 @@ function AdminLayout({ children }) {
   const navigate = useNavigate();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [liveOrderAlert, setLiveOrderAlert] = useState(null);
   const menuRef = useRef(null);
+  const seenOrderIdsRef = useRef(new Set());
+  const alertTimeoutRef = useRef(null);
 
   /* =======================
       USER DATA (Dynamic)
@@ -33,31 +36,59 @@ function AdminLayout({ children }) {
 
   const userInitials = getInitials(userName);
 
+  const showLiveOrderAlert = (order) => {
+    if (alertTimeoutRef.current) {
+      clearTimeout(alertTimeoutRef.current);
+    }
+
+    setLiveOrderAlert({
+      id: order?.id,
+      customer: order?.customer_name || "Walk-in Customer",
+      total: Number(order?.total_price || 0).toLocaleString("en-IN"),
+    });
+
+    alertTimeoutRef.current = setTimeout(() => {
+      setLiveOrderAlert(null);
+    }, 8000);
+  };
+
   /* =======================
       REAL-TIME NOTIFICATIONS
   ======================= */
   useEffect(() => {
-    // 1. Request Permission
-    if (Notification.permission !== "granted") {
-      Notification.requestPermission();
+    // 1. Request permission when notifications are supported
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
     }
 
-    // 2. Setup Subscription for order alerts
+    // 2. Setup subscription for order alerts
     const orderChannel = supabase
-      .channel('admin-order-alerts')
+      .channel("admin-order-alerts")
       .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'orders' },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "orders" },
         (payload) => {
-          // Play Alert Sound
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+          const order = payload?.new || {};
+          const orderId = order?.id;
+          if (orderId && seenOrderIdsRef.current.has(orderId)) return;
+          if (orderId) seenOrderIdsRef.current.add(orderId);
+
+          showLiveOrderAlert(order);
+
+          // Mobile haptic feedback on supported devices
+          if ("vibrate" in navigator) {
+            navigator.vibrate([120, 80, 120]);
+          }
+
+          // Play alert sound
+          const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
           audio.play().catch(() => console.log("Sound alert ready. Click dashboard once to enable."));
 
-          // Browser Notification
-          if (Notification.permission === "granted") {
-            new Notification("🚨 New Order Received!", {
-              body: `Customer: ${payload.new.customer_name}\nTotal: ₹${payload.new.total_price}`,
-              icon: logo 
+          // Browser notification
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("New Order Received", {
+              body: `Customer: ${order.customer_name || "Walk-in Customer"}\nTotal: Rs ${Number(order.total_price || 0).toLocaleString("en-IN")}`,
+              icon: logo,
             });
           }
         }
@@ -65,10 +96,12 @@ function AdminLayout({ children }) {
       .subscribe();
 
     return () => {
+      if (alertTimeoutRef.current) {
+        clearTimeout(alertTimeoutRef.current);
+      }
       supabase.removeChannel(orderChannel);
     };
   }, [logo]);
-
   /* =======================
       CLICK OUTSIDE LOGIC
   ======================= */
@@ -82,7 +115,8 @@ function AdminLayout({ children }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleFinalLogout = () => {
+  const handleFinalLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.clear();
     sessionStorage.clear();
     setShowLogoutConfirm(false);
@@ -127,6 +161,21 @@ function AdminLayout({ children }) {
 
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto relative z-10 flex flex-col">
+        {liveOrderAlert && (
+          <div className="fixed top-4 left-4 right-4 sm:left-auto sm:w-[360px] sm:right-6 z-[1200]">
+            <Link
+              to="/orders"
+              className="block rounded-2xl border border-emerald-300/40 bg-emerald-500 text-white shadow-2xl px-4 py-3"
+              onClick={() => setLiveOrderAlert(null)}
+            >
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-90">New Order Alert</p>
+              <p className="text-sm font-black leading-tight mt-1">{liveOrderAlert.customer}</p>
+              <p className="text-xs font-bold mt-1">Total: Rs {liveOrderAlert.total}</p>
+              <p className="text-[10px] font-black uppercase tracking-wide mt-2 opacity-90">Tap to open Orders</p>
+            </Link>
+          </div>
+        )}
+
         <header className="flex justify-between items-center p-8 bg-white/70 dark:bg-[#0b1220]/80 backdrop-blur-sm transition-colors relative z-[50] border-b border-slate-100 dark:border-slate-800">
             <div className="flex flex-col">
               <span className="text-[10px] font-black text-blue-600 dark:text-blue-300 uppercase tracking-[0.2em] mb-1">System Management</span>
@@ -200,3 +249,4 @@ function AdminLayout({ children }) {
 }
 
 export default AdminLayout;
+
