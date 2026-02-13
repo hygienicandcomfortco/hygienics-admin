@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import { supabase } from "./utils/supabase";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -12,8 +13,46 @@ import Settings from "./pages/Settings";
 
 // Protected Route
 const ProtectedRoute = ({ children }) => {
-  const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-  return isLoggedIn ? children : <Navigate to="/#/login" replace />;
+  const [isChecking, setIsChecking] = useState(true);
+  const [isAllowed, setIsAllowed] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const evaluateSession = async (sessionOverride = null) => {
+      const session = sessionOverride ?? (await supabase.auth.getSession()).data.session;
+      const userRole = localStorage.getItem("userRole");
+      const roleAllowed = userRole === "admin" || userRole === "staff";
+      const allowed = Boolean(session) && roleAllowed;
+
+      if (!allowed) {
+        localStorage.removeItem("isLoggedIn");
+      } else {
+        localStorage.setItem("isLoggedIn", "true");
+      }
+
+      if (mounted) {
+        setIsAllowed(allowed);
+        setIsChecking(false);
+      }
+    };
+
+    evaluateSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      evaluateSession(session);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  if (isChecking) return null;
+  return isAllowed ? children : <Navigate to="/login" replace />;
 };
 
 function App() {
@@ -47,7 +86,7 @@ function App() {
         <Route path="/settings" element={<ProtectedRoute><Settings isDark={isDark} setIsDark={setIsDark} /></ProtectedRoute>} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to="/#/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </div>
   );
