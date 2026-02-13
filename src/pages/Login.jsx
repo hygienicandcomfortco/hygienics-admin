@@ -36,17 +36,19 @@ function Login() {
         throw new Error("User profile not found. Contact admin.");
       }
 
-      // 3. Save metadata
+      // 3. Enforce admin/staff access for this app
+      if (!["admin", "staff"].includes(profile.role)) {
+        await supabase.auth.signOut();
+        throw new Error("Access denied. Admin/Staff accounts only.");
+      }
+
+      // 4. Save metadata
       localStorage.setItem("userRole", profile.role);
-      localStorage.setItem("userName", profile.full_name || "Staff Member");
+      localStorage.setItem("userName", profile.full_name || "Admin");
       localStorage.setItem("isLoggedIn", "true");
 
-      // 4. Redirect using HASH for GitHub Pages
-      if (profile.role === "admin") {
-        window.location.href = "/#/dashboard";
-      } else {
-        window.location.href = "/#/orders";
-      }
+      // 5. Redirect using HASH for GitHub Pages
+      window.location.href = "/#/dashboard";
 
     } catch (err) {
       setError(err.message || "Invalid email or password");
@@ -59,7 +61,7 @@ function Login() {
       <div className="w-full max-w-md px-6">
         <div className="bg-white dark:bg-[#0f172a] p-10 rounded-[40px] shadow-2xl border border-slate-100 dark:border-slate-800">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-100">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-4">
               <ShieldCheck className="text-white w-10 h-10" />
             </div>
             <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight uppercase">Admin Login</h2>
@@ -105,7 +107,7 @@ function Login() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-blue-600 text-white h-16 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-blue-700 transition-all shadow-xl shadow-slate-100 active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100"
+              className="w-full bg-blue-600 text-white h-16 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-blue-700 transition-all active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center gap-2">
