@@ -32,10 +32,12 @@ function Customers() {
     total_orders: 0
   });
 
-  const normalizePhone = (value = "") => value.replace(/\D/g, "").replace(/^91/, "").slice(-10);
+  const normalizePhone = (value = "") => String(value ?? "").replace(/\D/g, "").replace(/^91/, "").slice(-10);
   const normalizeEmail = (value = "") => value.trim().toLowerCase();
+  const getCustomerPhone = (customer = {}) => normalizePhone(customer.phone || customer.phone_number || "");
 
   const [orders, setOrders] = useState([]);
+  const [phoneSyncDone, setPhoneSyncDone] = useState(false);
 
   /* =======================
       RESTRICTION LOGIC
@@ -55,7 +57,15 @@ function Customers() {
     if (error) {
       console.error("Fetch customers failed:", error);
     } else {
-      setCustomers(data || []);
+      const normalized = (data || []).map((c) => {
+        const normalizedPhone = getCustomerPhone(c);
+        return {
+          ...c,
+          phone: normalizedPhone,
+          phone_number: normalizedPhone,
+        };
+      });
+      setCustomers(normalized);
     }
     setLoading(false);
   };
@@ -63,7 +73,7 @@ function Customers() {
   const fetchOrdersForTotals = async () => {
     const { data, error } = await supabase
       .from("orders")
-      .select("id, total_price, phone_number, email, customer_email");
+      .select("id, total_price, phone_number, email");
 
     if (!error && data) {
       setOrders(data || []);
@@ -74,7 +84,7 @@ function Customers() {
     if (String(error?.message || "").toLowerCase().includes("column") && String(error?.message || "").toLowerCase().includes("email")) {
       const { data: fallbackData } = await supabase
         .from("orders")
-        .select("id, total_price, phone_number, customer_email");
+        .select("id, total_price, phone_number");
       setOrders(fallbackData || []);
     }
   };
@@ -83,6 +93,52 @@ function Customers() {
     fetchCustomers();
     fetchOrdersForTotals();
   }, []);
+
+  useEffect(() => {
+    if (phoneSyncDone) return;
+    if (!customers.length || !orders.length) return;
+
+    const syncCustomerPhonesFromSignupOrders = async () => {
+      const latestOrderPhoneByEmail = new Map();
+
+      (orders || []).forEach((o) => {
+        const emailKey = normalizeEmail(o.email || "");
+        const phone = normalizePhone(o.phone_number || "");
+        if (!emailKey || !phone) return;
+        latestOrderPhoneByEmail.set(emailKey, phone);
+      });
+
+      const updates = (customers || [])
+        .map((c) => {
+          const emailKey = normalizeEmail(c.email || "");
+          const latestPhone = latestOrderPhoneByEmail.get(emailKey);
+          if (!emailKey || !latestPhone) return null;
+          if (getCustomerPhone(c) === latestPhone) return null;
+          return { id: c.id, phone: latestPhone };
+        })
+        .filter(Boolean);
+
+      if (updates.length === 0) {
+        setPhoneSyncDone(true);
+        return;
+      }
+
+      for (const u of updates) {
+        const { error } = await supabase
+          .from("customers")
+          .update({ phone: u.phone, phone_number: u.phone })
+          .eq("id", u.id);
+        if (error) {
+          console.error("Customer phone sync failed:", error);
+        }
+      }
+
+      setPhoneSyncDone(true);
+      fetchCustomers();
+    };
+
+    syncCustomerPhonesFromSignupOrders();
+  }, [customers, orders, phoneSyncDone]);
 
   /* =======================
       MODAL HANDLERS
@@ -95,7 +151,7 @@ function Customers() {
       setForm({
         customer_name: cust.customer_name || "",
         email: cust.email || "",
-        phone: cust.phone || "",
+        phone: getCustomerPhone(cust),
         total_orders: Number(cust.total_orders) || 0,
         total_spend: Number(cust.total_spend) || 0,
       });
@@ -115,7 +171,7 @@ function Customers() {
   };
 
   const syncOrdersFromCustomer = async (original, updated) => {
-    const oldPhone = normalizePhone(original?.phone || updated.phone || "");
+    const oldPhone = getCustomerPhone(original) || normalizePhone(updated.phone || "");
     const oldEmail = (original?.email || updated.email || "").trim();
     const newPhone = normalizePhone(updated.phone || "");
     const newEmail = (updated.email || "").trim();
@@ -157,6 +213,7 @@ function Customers() {
         customer_name: form.customer_name,
         email: form.email || null,
         phone: form.phone,
+        phone_number: form.phone,
         total_orders: Number(form.total_orders),
         total_spend: Number(form.total_spend)
     };
@@ -213,7 +270,7 @@ function Customers() {
     customers.forEach((c) => parent.set(c.id, c.id));
 
     customers.forEach((c) => {
-      const phoneKey = normalizePhone(c.phone || "");
+      const phoneKey = getCustomerPhone(c);
       const emailKey = normalizeEmail(c.email || "");
 
       if (phoneKey) {
@@ -237,7 +294,7 @@ function Customers() {
     const keyToGroup = new Map();
     Array.from(groups.values()).forEach((group, index) => {
       group.forEach((c) => {
-        const phoneKey = normalizePhone(c.phone || "");
+        const phoneKey = getCustomerPhone(c);
         const emailKey = normalizeEmail(c.email || "");
         if (phoneKey) keyToGroup.set(`p:${phoneKey}`, index);
         if (emailKey) keyToGroup.set(`e:${emailKey}`, index);
@@ -252,7 +309,7 @@ function Customers() {
 
     (orders || []).forEach((o) => {
       const phoneKey = normalizePhone(o.phone_number || "");
-      const emailKey = normalizeEmail(o.email || o.customer_email || "");
+      const emailKey = normalizeEmail(o.email || "");
 
       const phoneGroup = phoneKey ? keyToGroup.get(`p:${phoneKey}`) : undefined;
       const emailGroup = emailKey ? keyToGroup.get(`e:${emailKey}`) : undefined;
@@ -278,7 +335,7 @@ function Customers() {
         ...primary,
         total_orders: totals.total_orders > 0 ? totals.total_orders : fallbackOrders,
         total_spend: totals.total_spend > 0 ? totals.total_spend : fallbackSpend,
-        phone: primary.phone || group.find((c) => c.phone)?.phone || "",
+        phone: getCustomerPhone(primary) || getCustomerPhone(group.find((c) => getCustomerPhone(c))) || "",
         email: primary.email || group.find((c) => c.email)?.email || ""
       };
     });
@@ -300,7 +357,7 @@ function Customers() {
     }
 
     return list;
-  }, [customers, searchTerm, sortBy]);
+  }, [customers, orders, searchTerm, sortBy]);
 
   return (
     <AdminLayout>
