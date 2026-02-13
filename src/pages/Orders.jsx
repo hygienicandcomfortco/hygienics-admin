@@ -36,7 +36,8 @@ const getItemName = (item) => item?.productName || item?.name || item?.title || 
 const getItemQty = (item) => Number(item?.qty ?? item?.quantity ?? item?.count ?? 1);
 const getItemPrice = (item) => Number(item?.price ?? item?.unit_price ?? item?.unitPrice ?? item?.sale_price ?? item?.rate ?? 0);
 const getItemTotal = (item) => Number(item?.total ?? item?.line_total ?? item?.amount ?? (getItemQty(item) * getItemPrice(item)));
-const normalizePhone = (value = "") => value.replace(/\D/g, "").replace(/^91/, "").slice(-10);
+const normalizePhone = (value = "") => String(value ?? "").replace(/\D/g, "").replace(/^91/, "").slice(-10);
+const asText = (value) => (value == null ? "" : String(value));
 
 function Orders() {
   /* =======================
@@ -47,8 +48,13 @@ function Orders() {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [categories, setCategories] = useState(() => {
-    const saved = localStorage.getItem("categories");
-    return saved ? JSON.parse(saved) : ["General", "Hygienic", "Comfort"];
+    try {
+      const saved = localStorage.getItem("categories");
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : ["General", "Hygienic", "Comfort"];
+    } catch {
+      return ["General", "Hygienic", "Comfort"];
+    }
   });
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -175,15 +181,15 @@ function Orders() {
       WHATSAPP STATUS ALERTS
   ======================= */
   const sendStatusUpdateWhatsApp = (order, newStatus) => {
-    const phone = order.phone_number.replace(/\D/g, "");
+    const phone = (order.phone_number || "").replace(/\D/g, "");
     let message = "";
 
     if (newStatus === "Packed") {
-      message = `Hello ${order.customer_name}, Your order (ID: ${order.id.toString().split('-')[0]}) has been PACKED and is ready for dispatch. Thank you!`;
+      message = `Hello ${order.customer_name}, Your order (ID: ${asText(order.id).split("-")[0]}) has been PACKED and is ready for dispatch. Thank you!`;
     } else if (newStatus === "Shipped") {
-      message = `Hello ${order.customer_name}, Good news! Your order (ID: ${order.id.toString().split('-')[0]}) has been SHIPPED. It will reach you shortly.`;
+      message = `Hello ${order.customer_name}, Good news! Your order (ID: ${asText(order.id).split("-")[0]}) has been SHIPPED. It will reach you shortly.`;
     } else if (newStatus === "Delivered") {
-      message = `Hello ${order.customer_name}, Your order (ID: ${order.id.toString().split('-')[0]}) has been DELIVERED. We hope you love the products!`;
+      message = `Hello ${order.customer_name}, Your order (ID: ${asText(order.id).split("-")[0]}) has been DELIVERED. We hope you love the products!`;
     }
 
     if (message) {
@@ -212,8 +218,8 @@ function Orders() {
   };
 
   const sendWhatsAppConfirmation = (order) => {
-    const phone = order.phone_number.replace(/\D/g, "");
-    const message = `Hello ${order.customer_name}, as per your confirmation on call, we have confirmed your order (Ref ID: ${order.id.toString().split('-')[0]}). Thank you for shopping with Hygienic & Comfort Co.!`;
+    const phone = (order.phone_number || "").replace(/\D/g, "");
+    const message = `Hello ${order.customer_name}, as per your confirmation on call, we have confirmed your order (Ref ID: ${asText(order.id).split("-")[0]}). Thank you for shopping with Hygienic & Comfort Co.!`;
     const encodedMsg = encodeURIComponent(message);
     window.open(`https://wa.me/${phone}?text=${encodedMsg}`, '_blank');
   };
@@ -510,7 +516,7 @@ function Orders() {
     const invoiceHtml = `
       <html>
       <head>
-        <title>Invoice #${order.id.toString().split('-')[0]}</title>
+        <title>Invoice #${asText(order.id).split("-")[0]}</title>
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
           body { font-family: 'Plus Jakarta Sans', sans-serif; color: #1a202c; margin: 0; padding: 0; background: #fff; }
@@ -541,7 +547,7 @@ function Orders() {
             </div>
             <div class="inv-meta">
               <h2>INVOICE</h2>
-              <p style="font-weight: 800; color: #64748b;">REF: #${order.id.toString().split('-')[0].toUpperCase()}</p>
+              <p style="font-weight: 800; color: #64748b;">REF: #${asText(order.id).split("-")[0].toUpperCase()}</p>
             </div>
           </div>
 
@@ -609,12 +615,13 @@ function Orders() {
   ========================= */
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
-      const customerName = (o.customer_name || "").toLowerCase();
-      const customerPhone = (o.phone_number || "");
-      const customerEmail = (o.email || o.customer_email || "");
+      const customerName = asText(o.customer_name).toLowerCase();
+      const customerPhone = asText(o.phone_number);
+      const customerEmail = asText(o.email || o.customer_email);
       const customerMatch = customers.find(c => {
         const phoneMatch = normalizePhone(c.phone) && normalizePhone(o.phone_number) && normalizePhone(c.phone) === normalizePhone(o.phone_number);
-        const emailMatch = (c.email || "").toLowerCase() && (c.email || "").toLowerCase() === customerEmail.toLowerCase();
+        const email = asText(c.email).toLowerCase();
+        const emailMatch = email && email === customerEmail.toLowerCase();
         return phoneMatch || emailMatch;
       });
       const fallbackPhone = customerMatch?.phone ? `+91 ${customerMatch.phone}` : "";
@@ -670,7 +677,7 @@ function Orders() {
                 <tr key={o.id} className="hover:bg-slate-50/80 transition-all group">
                   <td className="px-6 py-8 align-top">
                     <span className="font-black text-slate-900 text-base uppercase bg-slate-100 px-3 py-1.5 rounded-lg block text-center">
-                        {o.id.toString().split('-')[0]}
+                        {asText(o.id).split("-")[0]}
                     </span>
                   </td>
 
@@ -679,7 +686,9 @@ function Orders() {
                         {(() => {
                           const customerMatch = customers.find(c => {
                             const phoneMatch = normalizePhone(c.phone) && normalizePhone(o.phone_number) && normalizePhone(c.phone) === normalizePhone(o.phone_number);
-                            const emailMatch = (c.email || "").toLowerCase() && (c.email || "").toLowerCase() === (o.email || o.customer_email || "").toLowerCase();
+                            const email = asText(c.email).toLowerCase();
+                            const targetEmail = asText(o.email || o.customer_email).toLowerCase();
+                            const emailMatch = email && email === targetEmail;
                             return phoneMatch || emailMatch;
                           });
                           const displayPhone = o.phone_number || (customerMatch?.phone ? `+91 ${customerMatch.phone}` : "—");
