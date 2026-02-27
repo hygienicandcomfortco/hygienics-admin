@@ -303,6 +303,7 @@ function Customers() {
 
     const groupTotals = Array.from(groups.values()).map(() => ({
       orderIds: new Set(),
+      phones: new Map(),
       total_orders: 0,
       total_spend: 0
     }));
@@ -322,6 +323,9 @@ function Customers() {
         g.total_orders += 1;
         g.total_spend += Number(o.total_price || 0);
       }
+      if (phoneKey) {
+        g.phones.set(phoneKey, (g.phones.get(phoneKey) || 0) + 1);
+      }
     });
 
     // 3) Build merged customer list
@@ -330,12 +334,14 @@ function Customers() {
       const fallbackOrders = group.reduce((sum, c) => sum + Number(c.total_orders || 0), 0);
       const fallbackSpend = group.reduce((sum, c) => sum + Number(c.total_spend || 0), 0);
       const totals = groupTotals[index];
+      const orderDerivedPhone = Array.from(totals.phones.entries())
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || "";
 
       return {
         ...primary,
         total_orders: totals.total_orders > 0 ? totals.total_orders : fallbackOrders,
         total_spend: totals.total_spend > 0 ? totals.total_spend : fallbackSpend,
-        phone: getCustomerPhone(primary) || getCustomerPhone(group.find((c) => getCustomerPhone(c))) || "",
+        phone: getCustomerPhone(primary) || getCustomerPhone(group.find((c) => getCustomerPhone(c))) || orderDerivedPhone || "",
         email: primary.email || group.find((c) => c.email)?.email || ""
       };
     });

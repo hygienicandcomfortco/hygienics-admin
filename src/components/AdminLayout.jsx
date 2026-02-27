@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { 
   MdLogout, MdErrorOutline, MdDashboard, MdInventory, 
-  MdShoppingCart, MdPeople, MdPerson, MdSettings, MdShield 
+  MdShoppingCart, MdPeople, MdPerson, MdSettings, MdShield, MdMenu, MdChevronLeft 
 } from "react-icons/md";
 import logo from "../assets/logo.png";
 import { supabase } from "../utils/supabase"; // Path updated to match your explorer
@@ -13,6 +13,13 @@ function AdminLayout({ children }) {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [liveOrderAlert, setLiveOrderAlert] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("adminSidebarOpen");
+    if (saved === "1") return true;
+    if (saved === "0") return false;
+    return window.innerWidth >= 768;
+  });
   const menuRef = useRef(null);
   const seenOrderIdsRef = useRef(new Set());
   const alertTimeoutRef = useRef(null);
@@ -115,6 +122,28 @@ function AdminLayout({ children }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  useEffect(() => {
+    localStorage.setItem("adminSidebarOpen", isSidebarOpen ? "1" : "0");
+  }, [isSidebarOpen]);
+
+  const handleSidebarNavClick = () => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  };
+
   const handleFinalLogout = async () => {
     await supabase.auth.signOut();
     localStorage.clear();
@@ -132,29 +161,82 @@ function AdminLayout({ children }) {
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/10 dark:bg-blue-900/30 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[10%] w-[30%] h-[30%] rounded-full bg-indigo-600/10 dark:bg-indigo-900/30 blur-[100px] pointer-events-none" />
 
+      {/* MOBILE SIDEBAR BACKDROP */}
+      {isSidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setIsSidebarOpen(false)}
+          className="md:hidden fixed inset-0 bg-slate-900/50 z-10"
+        />
+      )}
+
       {/* SIDEBAR */}
-      <aside className="w-64 bg-white/80 dark:bg-[#0f172a]/70 backdrop-blur-md text-slate-600 dark:text-slate-300 p-6 flex flex-col border-r border-slate-200 dark:border-slate-800 z-20 transition-colors">
-        <div className="flex items-center gap-3 mb-10">
-          <Link to="/dashboard" className="flex items-center gap-3">
+      <aside
+        className={`fixed md:static inset-y-0 left-0 bg-white/80 dark:bg-[#0f172a]/70 backdrop-blur-md text-slate-600 dark:text-slate-300 p-4 md:p-6 flex flex-col border-r border-slate-200 dark:border-slate-800 z-20 transition-all duration-300
+        ${isSidebarOpen ? "w-64 translate-x-0" : "w-20 -translate-x-full md:translate-x-0"}`}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <button
+            type="button"
+            aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            onClick={() => setIsSidebarOpen((prev) => !prev)}
+            className="hidden md:flex w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 items-center justify-center text-slate-600 dark:text-slate-300"
+          >
+            {isSidebarOpen ? <MdChevronLeft size={22} /> : <MdMenu size={20} />}
+          </button>
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 ml-auto"
+          >
+            <MdChevronLeft size={22} />
+          </button>
+        </div>
+        <div className={`flex items-center gap-3 mb-10 ${isSidebarOpen ? "" : "justify-center"}`}>
+          <Link to="/dashboard" className="flex items-center gap-3" onClick={handleSidebarNavClick}>
             <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg cursor-pointer">
               <img src={logo} alt="H&C Logo" className="w-full h-full object-contain" />
             </div>
           </Link>
-          <h1 className="text-slate-900 dark:text-white text-lg font-black tracking-tight uppercase">Admin Panel</h1>
+          {isSidebarOpen && (
+            <h1 className="text-slate-900 dark:text-white text-lg font-black tracking-tight uppercase">Admin Panel</h1>
+          )}
         </div>
         
         <nav className="flex-1 space-y-2 font-bold text-sm">
-          <Link to="/dashboard" className={`flex items-center gap-3 p-4 rounded-xl transition-all ${isActive("/dashboard") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}>
-            <MdDashboard size={22}/> Dashboard
+          <Link
+            to="/dashboard"
+            title="Dashboard"
+            onClick={handleSidebarNavClick}
+            className={`flex items-center p-4 rounded-xl transition-all ${isSidebarOpen ? "gap-3" : "gap-0 justify-center"} ${isActive("/dashboard") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}
+          >
+            <MdDashboard size={22} className="shrink-0" /> {isSidebarOpen && "Dashboard"}
           </Link>
-          <Link to="/products" className={`flex items-center gap-3 p-4 rounded-xl transition-all ${isActive("/products") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}>
-            <MdInventory size={22}/> Products
+          <Link
+            to="/products"
+            title="Products"
+            onClick={handleSidebarNavClick}
+            className={`flex items-center p-4 rounded-xl transition-all ${isSidebarOpen ? "gap-3" : "gap-0 justify-center"} ${isActive("/products") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}
+          >
+            <MdInventory size={22} className="shrink-0" /> {isSidebarOpen && "Products"}
           </Link>
-          <Link to="/orders" className={`flex items-center gap-3 p-4 rounded-xl transition-all ${isActive("/orders") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}>
-            <MdShoppingCart size={22}/> Orders
+          <Link
+            to="/orders"
+            title="Orders"
+            onClick={handleSidebarNavClick}
+            className={`flex items-center p-4 rounded-xl transition-all ${isSidebarOpen ? "gap-3" : "gap-0 justify-center"} ${isActive("/orders") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}
+          >
+            <MdShoppingCart size={22} className="shrink-0" /> {isSidebarOpen && "Orders"}
           </Link>
-          <Link to="/customers" className={`flex items-center gap-3 p-4 rounded-xl transition-all ${isActive("/customers") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}>
-            <MdPeople size={22} /> Customers
+          <Link
+            to="/customers"
+            title="Customers"
+            onClick={handleSidebarNavClick}
+            className={`flex items-center p-4 rounded-xl transition-all ${isSidebarOpen ? "gap-3" : "gap-0 justify-center"} ${isActive("/customers") ? "bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300" : "hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"}`}
+          >
+            <MdPeople size={22} className="shrink-0" /> {isSidebarOpen && "Customers"}
           </Link>
         </nav>
       </aside>
@@ -177,9 +259,19 @@ function AdminLayout({ children }) {
         )}
 
         <header className="flex justify-between items-center p-8 bg-white/70 dark:bg-[#0b1220]/80 backdrop-blur-sm transition-colors relative z-[50] border-b border-slate-100 dark:border-slate-800">
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-blue-600 dark:text-blue-300 uppercase tracking-[0.2em] mb-1">System Management</span>
-              <h2 className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase">Dashboard {location.pathname.replace('/', ' / ')}</h2>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                aria-label="Open sidebar"
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center"
+              >
+                <MdMenu size={22} />
+              </button>
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-blue-600 dark:text-blue-300 uppercase tracking-[0.2em] mb-1">System Management</span>
+                <h2 className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase">Dashboard {location.pathname.replace('/', ' / ')}</h2>
+              </div>
             </div>
 
             <div className="relative" ref={menuRef}>

@@ -19,6 +19,40 @@ const extractItems = (value) => {
   return value;
 };
 
+const parseItemsFromText = (raw = "") => {
+  const text = asText(raw).trim();
+  if (!text) return [];
+
+  const parsed = [];
+  const regex = /(.+?)\s+x(\d+)(?=,|$)/gi;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const name = asText(match[1]).trim().replace(/^,+\s*/, "");
+    const qty = Math.max(1, Number(match[2] || 1));
+    if (name) parsed.push({ productName: name, qty, price: 0, total: 0 });
+  }
+
+  if (parsed.length > 0) return parsed;
+
+  return text
+    .split(",")
+    .map((part) => asText(part).trim())
+    .filter(Boolean)
+    .map((part) => {
+      const m = part.match(/(.+?)\s+x(\d+)$/i);
+      if (m) {
+        return {
+          productName: asText(m[1]).trim(),
+          qty: Math.max(1, Number(m[2] || 1)),
+          price: 0,
+          total: 0
+        };
+      }
+      return { productName: part, qty: 1, price: 0, total: 0 };
+    });
+};
+
 const normalizeItems = (raw) => {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
@@ -26,7 +60,8 @@ const normalizeItems = (raw) => {
     try {
       return extractItems(JSON.parse(raw));
     } catch {
-      return raw;
+      const parsedTextItems = parseItemsFromText(raw);
+      return parsedTextItems.length > 0 ? parsedTextItems : raw;
     }
   }
   return extractItems(raw);
@@ -38,6 +73,37 @@ const getItemPrice = (item) => Number(item?.price ?? item?.unit_price ?? item?.u
 const getItemTotal = (item) => Number(item?.total ?? item?.line_total ?? item?.amount ?? (getItemQty(item) * getItemPrice(item)));
 const normalizePhone = (value = "") => String(value ?? "").replace(/\D/g, "").replace(/^91/, "").slice(-10);
 const asText = (value) => (value == null ? "" : String(value));
+const escapeHtml = (value = "") => asText(value)
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+const normalizeName = (value = "") => asText(value).trim().toLowerCase();
+const getCustomerAddress = (customer = {}) =>
+  customer?.address
+  || customer?.full_address
+  || customer?.customer_address
+  || customer?.shipping_address
+  || customer?.delivery_address
+  || customer?.billing_address
+  || customer?.address_line1
+  || customer?.address_line_1
+  || customer?.address1
+  || customer?.house_address
+  || "";
+const formatDateTime = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
 
 function Orders() {
   /* =======================
@@ -47,6 +113,7 @@ function Orders() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [customerAddresses, setCustomerAddresses] = useState([]);
   const [categories, setCategories] = useState(() => {
     try {
       const saved = localStorage.getItem("categories");
@@ -60,6 +127,7 @@ function Orders() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [expandedOrderItems, setExpandedOrderItems] = useState({});
   
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [showQuickProductModal, setShowQuickProductModal] = useState(false);
@@ -74,6 +142,7 @@ function Orders() {
     customer: "",
     phone: "",
     email: "",
+    address: "",
     items: [], 
     status: "New",
     payment_status: "Pending", // New Field
@@ -92,6 +161,151 @@ function Orders() {
   const paymentStatuses = ["Pending", "Paid", "Partially Paid"];
   const paymentMethods = ["Cash", "Online", "COD", "Bank Transfer"];
 
+  const toggleExpandedItems = (orderId) => {
+    setExpandedOrderItems((prev) => ({
+      ...prev,
+      [orderId]: !prev[orderId]
+    }));
+  };
+
+  const findProductByItemName = (itemName = "") => {
+    const target = normalizeName(itemName);
+    if (!target) return null;
+
+    const exact = products.find((p) => normalizeName(p.name) === target);
+    if (exact) return exact;
+
+    return products.find((p) => {
+      const productName = normalizeName(p.name);
+      return productName.includes(target) || target.includes(productName);
+    }) || null;
+  };
+
+  const buildPricedItems = (order = {}) => {
+    const parsed = normalizeItems(order.items);
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
+
+    const base = parsed.map((item) => {
+      const qty = Math.max(1, getItemQty(item));
+      const product = findProductByItemName(getItemName(item));
+      const productPrice = Number(product?.price || 0);
+      const productMrp = Number(product?.mrp ?? product?.original_price ?? product?.compare_at_price ?? 0);
+      const givenPrice = Number(getItemPrice(item) || 0);
+      const givenTotal = Number(getItemTotal(item) || 0);
+
+      return {
+        raw: item,
+        name: getItemName(item),
+        qty,
+        productPrice: productPrice > 0 ? productPrice : 0,
+        productMrp: productMrp > 0 ? productMrp : 0,
+        givenPrice: givenPrice > 0 ? givenPrice : 0,
+        givenTotal: givenTotal > 0 ? givenTotal : 0
+      };
+    });
+
+    const totalQty = base.reduce((sum, item) => sum + item.qty, 0);
+    const orderTotal = Math.max(0, Number(order.total_price || 0));
+    const avgUnit = totalQty > 0 ? orderTotal / totalQty : 0;
+
+    const priced = base.map((item) => {
+      const unit = item.givenPrice || item.productPrice || avgUnit || 0;
+      const line = item.givenTotal || (unit * item.qty);
+      const mrp = item.productMrp || Math.max(unit, line / item.qty);
+      return {
+        ...item.raw,
+        productName: item.name,
+        qty: item.qty,
+        price: unit,
+        mrp,
+        total: line
+      };
+    });
+
+    const summed = priced.reduce((sum, item) => sum + Number(item.total || 0), 0);
+    const delta = orderTotal - summed;
+    if (priced.length > 0 && orderTotal > 0 && Math.abs(delta) >= 0.5) {
+      const last = priced.length - 1;
+      priced[last] = { ...priced[last], total: Math.max(0, Number(priced[last].total || 0) + delta) };
+    }
+
+    return priced;
+  };
+
+  const findMatchingCustomer = (order = {}) => {
+    const orderPhone = normalizePhone(order.phone_number || "");
+    const orderEmail = asText(order.email || order.customer_email).toLowerCase();
+    return customers.find((customer) => {
+      const customerPhone = normalizePhone(customer.phone || customer.phone_number || "");
+      const customerEmail = asText(customer.email).toLowerCase();
+      const phoneMatch = orderPhone && customerPhone && orderPhone === customerPhone;
+      const emailMatch = orderEmail && customerEmail && orderEmail === customerEmail;
+      return phoneMatch || emailMatch;
+    });
+  };
+
+  const formatAddressRecord = (addressRecord = {}) => {
+    if (!addressRecord || typeof addressRecord !== "object") return "";
+    const fullAddress = asText(
+      addressRecord.full_address
+      || addressRecord.address
+      || addressRecord.address_line
+      || addressRecord.street
+    ).trim();
+    const city = asText(addressRecord.city).trim();
+    const pincode = asText(addressRecord.pincode).trim();
+    const tail = [city, pincode].filter(Boolean).join(" - ");
+    if (fullAddress && tail) return `${fullAddress}, ${tail}`;
+    return fullAddress || tail;
+  };
+
+  const findAddressRecord = (order = {}, matchedCustomer = null) => {
+    if (!Array.isArray(customerAddresses) || customerAddresses.length === 0) return null;
+    const customer = matchedCustomer || findMatchingCustomer(order);
+    const candidateUserIds = [
+      customer?.user_id,
+      customer?.id,
+      order?.user_id,
+      order?.customer_id
+    ].filter(Boolean);
+
+    if (candidateUserIds.length > 0) {
+      const byUserId = customerAddresses.find((addr) => {
+        const addrUserId = asText(addr.user_id).trim();
+        return addrUserId && candidateUserIds.includes(addrUserId);
+      });
+      if (byUserId) return byUserId;
+    }
+
+    const targetName = normalizeName(order.customer_name || customer?.customer_name);
+    if (!targetName) return null;
+
+    const candidates = customerAddresses.filter((addr) => {
+      const addrName = normalizeName(addr.full_name);
+      if (!addrName) return false;
+      if (addrName === targetName) return true;
+      if (addrName.includes(targetName) || targetName.includes(addrName)) return true;
+
+      const targetParts = targetName.split(/\s+/).filter((p) => p.length >= 3);
+      if (targetParts.length === 0) return false;
+      return targetParts.every((part) => addrName.includes(part));
+    });
+
+    if (candidates.length === 0) return null;
+    const preferred = candidates.find((addr) => addr.is_default);
+    return preferred || candidates[0];
+  };
+
+  const getResolvedCustomerAddress = (order = {}) => {
+    const addressOnOrder = getCustomerAddress(order);
+    if (addressOnOrder) return addressOnOrder;
+    const matchedCustomer = findMatchingCustomer(order);
+    const addressOnCustomer = getCustomerAddress(matchedCustomer);
+    if (addressOnCustomer) return addressOnCustomer;
+    const addressRecord = findAddressRecord(order, matchedCustomer);
+    return formatAddressRecord(addressRecord);
+  };
+
   /* =======================
       EFFECTS
   ======================= */
@@ -99,6 +313,7 @@ function Orders() {
     fetchOrders();
     fetchProducts();
     fetchCustomers();
+    fetchCustomerAddresses();
   }, []);
 
   useEffect(() => { localStorage.setItem("products", JSON.stringify(products)); }, [products]);
@@ -117,8 +332,33 @@ function Orders() {
   const fetchCustomers = async () => {
     const { data, error } = await supabase
       .from("customers")
-      .select("id, customer_name, email, phone");
+      .select("*");
     if (!error && data) setCustomers(data);
+  };
+
+  const fetchCustomerAddresses = async () => {
+    const { data, error } = await supabase
+      .from("customer_addresses")
+      .select("user_id, full_name, full_address, city, pincode, is_default, created_at")
+      .order("is_default", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (!error) {
+      setCustomerAddresses(data || []);
+      return;
+    }
+
+    const { data: fallbackData, error: fallbackError } = await supabase
+      .from("customer_addresses")
+      .select("*");
+
+    if (fallbackError) {
+      console.warn("Fetch customer_addresses failed:", fallbackError.message);
+      setCustomerAddresses([]);
+      return;
+    }
+
+    setCustomerAddresses(fallbackData || []);
   };
 
   const fetchOrders = async () => {
@@ -135,9 +375,11 @@ function Orders() {
           customer_name,
           phone_number,
           email,
+          address,
           is_approved,
           payment_status,
-          payment_method
+          payment_method,
+          delivered_at
         `) 
         .order("created_at", { ascending: false });
 
@@ -158,9 +400,11 @@ function Orders() {
             created_at,
             customer_name,
             phone_number,
+            address,
             is_approved,
             payment_status,
-            payment_method
+            payment_method,
+            delivered_at
           `)
           .order("created_at", { ascending: false });
 
@@ -200,9 +444,16 @@ function Orders() {
   const updateOrderStatus = async (orderId, newStatus) => {
     const orderObj = orders.find(o => o.id === orderId);
     try {
+      const updatePayload = { status: newStatus };
+      if (newStatus === "Delivered") {
+        updatePayload.delivered_at = new Date().toISOString();
+      } else if (orderObj?.delivered_at) {
+        updatePayload.delivered_at = null;
+      }
+
       const { error } = await supabase
         .from("orders")
-        .update({ status: newStatus })
+        .update(updatePayload)
         .eq("id", orderId);
       
       if (error) throw error;
@@ -272,6 +523,7 @@ function Orders() {
     if (name) payload.customer_name = name;
     if (phone) payload.phone = phone;
     if (email) payload.email = email;
+    if (form.address) payload.address = form.address;
 
     if (existing && existing.length > 0) {
       await supabase.from("customers").update(payload).eq("id", existing[0].id);
@@ -281,7 +533,7 @@ function Orders() {
   };
 
   const handleCustomerSearch = async (val) => {
-    setOrderForm({ ...orderForm, customer: val });
+    setOrderForm((prev) => ({ ...prev, customer: val, address: "" }));
     
     if (val.length < 2) {
       setCustomerSuggestions([]);
@@ -291,7 +543,7 @@ function Orders() {
 
     const { data, error } = await supabase
       .from("customers")
-      .select("customer_name, phone, email")
+      .select("*")
       .ilike("customer_name", `%${val}%`)
       .limit(5);
 
@@ -303,11 +555,19 @@ function Orders() {
 
   const selectExistingCustomer = (cust) => {
     const cleanPhone = (cust.phone || "").replace("+91", "").trim();
+    const resolvedAddress = getResolvedCustomerAddress({
+      customer_name: cust.customer_name,
+      phone_number: cust.phone || cust.phone_number || "",
+      email: cust.email || "",
+      user_id: cust.user_id,
+      customer_id: cust.id
+    });
     setOrderForm({
       ...orderForm,
       customer: cust.customer_name,
       phone: cleanPhone,
-      email: cust.email || ""
+      email: cust.email || "",
+      address: resolvedAddress
     });
     setShowSuggestions(false);
   };
@@ -359,8 +619,10 @@ function Orders() {
         const originalName = (original.customer_name || "").trim();
         const originalPhone = normalizePhone(original.phone_number || "");
         const originalEmail = (original.email || original.customer_email || "").trim();
+        const originalAddress = (original.address || "").trim();
         const originalItems = Array.isArray(normalizeItems(original.items)) ? normalizeItems(original.items) : [];
         const originalStatus = original.status || "New";
+        const originalDeliveredAt = original.delivered_at || null;
         const originalPaymentStatus = original.payment_status || "Pending";
         const originalPaymentMethod = original.payment_method || "Cash";
 
@@ -381,13 +643,22 @@ function Orders() {
         if (nextEmail !== originalEmail) {
           updatePayload.email = nextEmail || null;
         }
+        const nextAddress = (orderForm.address || "").trim();
+        if (nextAddress !== originalAddress) {
+          updatePayload.address = nextAddress || null;
+        }
 
         if (JSON.stringify(orderForm.items || []) !== JSON.stringify(originalItems)) {
           updatePayload.items = orderForm.items || [];
           updatePayload.total_price = orderGrandTotal;
         }
 
-        if (orderForm.status !== originalStatus) updatePayload.status = orderForm.status;
+        if (orderForm.status !== originalStatus) {
+          updatePayload.status = orderForm.status;
+          updatePayload.delivered_at = orderForm.status === "Delivered" ? new Date().toISOString() : null;
+        } else if (originalStatus === "Delivered" && originalDeliveredAt == null) {
+          updatePayload.delivered_at = new Date().toISOString();
+        }
         if (orderForm.payment_status !== originalPaymentStatus) updatePayload.payment_status = orderForm.payment_status;
         if (orderForm.payment_method !== originalPaymentMethod) updatePayload.payment_method = orderForm.payment_method;
 
@@ -416,9 +687,11 @@ function Orders() {
           customer_name: orderForm.customer,
           phone_number: "+91" + orderForm.phone.replace("+91", "").trim(),
           email: orderForm.email || null,
+          address: orderForm.address || null,
           items: orderForm.items,
           total_price: orderGrandTotal,
           status: orderForm.status,
+          delivered_at: orderForm.status === "Delivered" ? new Date().toISOString() : null,
           payment_status: orderForm.payment_status,
           payment_method: orderForm.payment_method
         };
@@ -452,6 +725,7 @@ function Orders() {
         customer: "", 
         phone: "", 
         email: "",
+        address: "",
         items: [], 
         status: "New",
         payment_status: "Pending",
@@ -473,6 +747,7 @@ function Orders() {
       customer: order.customer_name || "",
       phone: (order.phone_number || "").replace("+91", "").trim(),
       email: order.email || order.customer_email || "",
+      address: getResolvedCustomerAddress(order),
       status: order.status || "New",
       payment_status: order.payment_status || "Pending",
       payment_method: order.payment_method || "Cash",
@@ -486,117 +761,164 @@ function Orders() {
   ========================= */
   const handleProfessionalPrint = (order) => {
     const printWindow = window.open('', '_blank', 'width=900,height=1000');
-    
+    const resolvedAddress = getResolvedCustomerAddress(order);
     let itemsHtml = "";
+    let totalQty = 0;
+    let mrpTotal = 0;
+    let unitPriceTotal = 0;
+    let discountTotal = 0;
+    const orderTotal = Math.max(0, Number(order.total_price || 0));
+
     try {
-        const parsedItems = normalizeItems(order.items);
-        if (Array.isArray(parsedItems)) {
-            if (parsedItems.length === 0) {
-              itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #64748b;">No items found</td></tr>`;
-            } else {
-              itemsHtml = parsedItems.map((item, index) => `
-                <tr>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: center; color: #718096; width: 6%;">${index + 1}</td>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; width: 54%;">
-                    <div style="font-weight: 700; color: #2d3748; font-size: 14px; line-height: 1.3;">${getItemName(item)}</div>
-                  </td>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: center; font-weight: 600; color: #4a5568; width: 12%;">${getItemQty(item)}</td>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: right; color: #4a5568; width: 14%;">???${Number(getItemPrice(item) || 0).toLocaleString('en-IN')}</td>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #edf2f7; text-align: right; font-weight: 700; color: #1a365d; width: 14%;">???${Number(getItemTotal(item) || 0).toLocaleString('en-IN')}</td>
-                </tr>
-              `).join('');
-            }
-        } else if (typeof parsedItems === "string") {
-            itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #64748b;">${parsedItems}</td></tr>`;
-        }
+      const parsedItems = buildPricedItems(order);
+      if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+        itemsHtml = parsedItems.map((item) => {
+          const qty = Math.max(1, getItemQty(item));
+          const unitPrice = Math.max(0, Number(getItemPrice(item) || 0));
+          const lineTotal = Math.max(0, Number(getItemTotal(item) || (qty * unitPrice)));
+          const itemMrp = Math.max(0, Number(item?.mrp || 0)) || Math.max(unitPrice, lineTotal / qty);
+          const lineMrp = itemMrp * qty;
+          const lineDiscount = Math.max(0, lineMrp - lineTotal);
+          totalQty += qty;
+          mrpTotal += lineMrp;
+          unitPriceTotal += lineTotal;
+          discountTotal += lineDiscount;
+
+          return `
+            <tr>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;vertical-align:top;line-height:1.35;overflow-wrap:anywhere;">${escapeHtml(getItemName(item))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center;">${qty}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">&#8377;${itemMrp.toLocaleString('en-IN')}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">&#8377;${unitPrice.toLocaleString('en-IN')}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">${lineDiscount > 0 ? `&#8377;${lineDiscount.toLocaleString('en-IN')}` : "-"}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;">&#8377;${lineTotal.toLocaleString('en-IN')}</td>
+            </tr>
+          `;
+        }).join("");
+      } else {
+        itemsHtml = `
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;vertical-align:top;overflow-wrap:anywhere;">${escapeHtml(order.items || "Items not available")}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center;">-</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">&#8377;${orderTotal.toLocaleString('en-IN')}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">-</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">-</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;">&#8377;${orderTotal.toLocaleString('en-IN')}</td>
+          </tr>
+        `;
+      }
     } catch (e) {
-        itemsHtml = `<tr><td colspan="5" style="padding: 20px; text-align: center;">${order.items}</td></tr>`;
+      itemsHtml = `<tr><td colspan="6" style="padding:20px;text-align:center;color:#64748b;">Unable to load items</td></tr>`;
     }
+
+    if (!mrpTotal) mrpTotal = orderTotal;
+    if (!unitPriceTotal) unitPriceTotal = orderTotal;
+    if (!totalQty) totalQty = 1;
+
+    const invoiceNo = `INV-${asText(order.id).split("-")[0].toUpperCase()}`;
+    const createdDate = new Date(order.created_at);
+    const orderNo = `HC-${createdDate.getFullYear()}${String(createdDate.getMonth() + 1).padStart(2, "0")}${String(createdDate.getDate()).padStart(2, "0")}-${asText(order.id).split("-")[0].toUpperCase()}`;
+    const invoiceDate = createdDate.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+    const deliveryDate = order.delivered_at
+      ? new Date(order.delivered_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+      : "-";
+    const customerPhone = order.phone_number || "-";
+    const customerEmail = order.email || order.customer_email || "";
+    const paymentMethod = escapeHtml(order.payment_method || "Cash");
+    const orderStatus = escapeHtml(order.status || "New");
+    const logoPath = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/")}logo.png`;
 
     const invoiceHtml = `
       <html>
       <head>
-        <title>Invoice #${asText(order.id).split("-")[0]}</title>
+        <title>Invoice #${invoiceNo}</title>
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-          body { font-family: 'Plus Jakarta Sans', sans-serif; color: #1a202c; margin: 0; padding: 0; background: #fff; }
-          .container { width: 800px; margin: 40px auto; padding: 50px; border: 1px solid #e2e8f0; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #2563eb; padding-bottom: 30px; margin-bottom: 40px; }
-          .brand h1 { margin: 0; color: #1e3a8a; font-size: 28px; font-weight: 800; letter-spacing: -1px; }
-          .brand p { margin: 5px 0; font-size: 13px; color: #64748b; font-weight: 600; }
-          .inv-meta { text-align: right; }
-          .inv-meta h2 { margin: 0; color: #2563eb; font-size: 32px; font-weight: 800; }
-          .info-row { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px; background: #f8fafc; padding: 30px; border-radius: 15px; }
-          .info-box h4 { margin: 0 0 10px 0; font-size: 11px; text-transform: uppercase; color: #3b82f6; letter-spacing: 1.5px; }
-          .info-box p { margin: 3px 0; font-weight: 700; font-size: 16px; color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; table-layout: fixed; }
-          th { background: #1e3a8a; color: white; text-align: left; padding: 14px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
-          td { font-size: 12px; }
-          .total-section { border-top: 2px solid #e2e8f0; padding-top: 20px; display: flex; justify-content: flex-end; }
-          .total-pill { background: #1e3a8a; color: white; padding: 20px 40px; border-radius: 15px; font-size: 22px; font-weight: 800; }
-          .footer { margin-top: 60px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #edf2f7; padding-top: 20px; }
+          body { font-family:'Plus Jakarta Sans','Segoe UI',sans-serif; color:#0f172a; margin:0; background:#fff; }
+          .invoice-page { width:800px; margin:18px auto; padding:20px; border:1px solid #e2e8f0; border-radius:12px; }
+          .header { display:grid; grid-template-columns:1.15fr 0.85fr; align-items:start; gap:20px; padding-bottom:18px; border-bottom:2px solid #2563eb; }
+          .brand-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+          .brand-row img { width:50px; height:50px; border-radius:50%; border:1px solid #dbe7ff; object-fit:contain; padding:2px; background:#fff; display:block; }
+          .right { text-align:right; }
+          .box { border:1px solid #e2e8f0; border-radius:10px; padding:14px; margin:20px 0; }
+          table { width:100%; table-layout:fixed; border-collapse:collapse; margin-bottom:18px; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; }
+          th { text-align:left; padding:10px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+          .foot td { background:#f8fafc; border-top:1px solid #cbd5e1; font-weight:800; }
+          .footer { border-top:1px solid #e2e8f0; padding-top:14px; text-align:center; color:#64748b; font-size:12px; }
         </style>
       </head>
       <body>
-        <div class="container">
+        <div class="invoice-page">
           <div class="header">
-            <div class="brand">
-              <h1>HYGIENIC & COMFORT CO.</h1>
-              <p>Shop no.1, Bhausaheb Paranjape Chawl, Ambernath (E), 421502</p>
-              <p>Phone: +91 93077 60665 | GST: 27AABCH1234F1Z5</p>
+            <div>
+              <div class="brand-row">
+                <img src="${escapeHtml(logoPath)}" alt="Logo" />
+                <h2 style="margin:0;font-size:38px;line-height:1.1;color:#111827;white-space:nowrap;">Hygienic & Comfort Co.</h2>
+              </div>
+              <p style="margin:0;color:#334155;font-size:14px;">Ambernath East, Maharashtra</p>
+              <p style="margin:4px 0 0 0;color:#334155;font-size:14px;">Contact: +91 9307760665</p>
+              <p style="margin:4px 0 0 0;color:#334155;font-size:14px;">hygienicsandcomfort@gmail.com</p>
             </div>
-            <div class="inv-meta">
-              <h2>INVOICE</h2>
-              <p style="font-weight: 800; color: #64748b;">REF: #${asText(order.id).split("-")[0].toUpperCase()}</p>
+            <div class="right">
+              <p style="margin:0;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">Tax Invoice</p>
+              <h1 style="margin:6px 0 0 0;font-size:42px;color:#2563eb;line-height:1;">INVOICE</h1>
+              <p style="margin:10px 0 0 0;font-size:14px;"><b>Invoice No:</b> #${invoiceNo}</p>
+              <p style="margin:4px 0 0 0;font-size:14px;"><b>Order ID:</b> ${orderNo}</p>
+              <p style="margin:4px 0 0 0;font-size:14px;"><b>Date:</b> ${invoiceDate}</p>
+              <p style="margin:4px 0 0 0;font-size:14px;"><b>Delivery Date:</b> ${deliveryDate}</p>
+              <p style="margin:4px 0 0 0;font-size:14px;"><b>Status:</b> ${orderStatus}</p>
             </div>
           </div>
 
-          <div class="info-row">
-            <div class="info-box">
-              <h4>Billed To Customer</h4>
-              <p>${order.customer_name || 'Walking Customer'}</p>
-              <p style="font-size: 14px; color: #64748b;">${order.phone_number || 'No Phone'}</p>
-            </div>
-            <div class="info-box" style="text-align: right;">
-              <h4>Billing Details</h4>
-              <p>Date: ${new Date(order.created_at).toLocaleDateString('en-IN')}</p>
-              <p style="color: ${order.payment_status === 'Paid' ? '#059669' : '#d97706'}; font-size: 14px; font-weight: bold;">
-                Status: ${order.payment_status?.toUpperCase() || 'PENDING'} / ${order.payment_method?.toUpperCase() || 'CASH'}
-              </p>
-            </div>
+          <div class="box">
+            <p style="margin:0 0 8px 0;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Shipping Address</p>
+            <p style="margin:0;font-weight:700;">${escapeHtml(order.customer_name || "Customer")}</p>
+            <p style="margin:4px 0 0 0;">${escapeHtml(resolvedAddress || "Address not available")}</p>
+            <p style="margin:4px 0 0 0;">Phone: ${escapeHtml(customerPhone)}</p>
+            ${customerEmail ? `<p style="margin:4px 0 0 0;">Email: ${escapeHtml(customerEmail)}</p>` : ""}
           </div>
 
           <table>
             <colgroup>
-              <col style="width: 6%;">
-              <col style="width: 54%;">
-              <col style="width: 12%;">
-              <col style="width: 14%;">
-              <col style="width: 14%;">
+              <col style="width:auto;">
+              <col style="width:62px;">
+              <col style="width:96px;">
+              <col style="width:96px;">
+              <col style="width:96px;">
+              <col style="width:110px;">
             </colgroup>
             <thead>
               <tr>
-                <th style="text-align: center; border-radius: 10px 0 0 0;">#</th>
-                <th>Product Description</th>
-                <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Price</th>
-                <th style="text-align: right; border-radius: 0 10px 0 0;">Total</th>
+                <th>Item Description</th>
+                <th style="text-align:center;">Qty</th>
+                <th style="text-align:right;">MRP</th>
+                <th style="text-align:right;">Unit Price</th>
+                <th style="text-align:right;">Discount</th>
+                <th style="text-align:right;">Total</th>
               </tr>
             </thead>
             <tbody>
               ${itemsHtml}
             </tbody>
+            <tfoot class="foot">
+              <tr>
+                <td style="padding:10px 12px;">Totals</td>
+                <td style="padding:10px 12px;text-align:center;">${totalQty}</td>
+                <td style="padding:10px 12px;text-align:right;">&#8377;${mrpTotal.toLocaleString('en-IN')}</td>
+                <td style="padding:10px 12px;text-align:right;">&#8377;${unitPriceTotal.toLocaleString('en-IN')}</td>
+                <td style="padding:10px 12px;text-align:right;color:#15803d;">${discountTotal > 0 ? `&#8377;${discountTotal.toLocaleString('en-IN')}` : "-"}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:900;">&#8377;${orderTotal.toLocaleString('en-IN')}</td>
+              </tr>
+            </tfoot>
           </table>
 
-          <div class="total-section">
-            <div class="total-pill">
-              Total Amount: ₹${(order.total_price || 0).toLocaleString('en-IN')}
-            </div>
-          </div>
+          <p style="margin:-6px 0 18px 0;text-align:right;color:#64748b;font-size:13px;">
+            Payment Method: <span style="font-weight:700;color:#0f172a;">${paymentMethod}</span>
+          </p>
 
           <div class="footer">
-            Thank you for shopping with us! This is a computer generated invoice.<br>
-            Please visit again for more Hygienic & Comfort products.
+            <p style="margin:0 0 4px 0;">Thank you for shopping with Hygienic & Comfort Co.!</p>
+            <p style="margin:0;">This is a computer-generated invoice and does not require a physical signature.</p>
           </div>
         </div>
       </body>
@@ -637,10 +959,10 @@ function Orders() {
 
   return (
     <AdminLayout>
-      <div className="mb-8 px-4 flex justify-between items-end">
+      <div className="mb-6 px-4 flex flex-wrap justify-between items-end gap-4">
         <div className="flex flex-col gap-4">
             <h2 className="text-4xl font-black text-white uppercase tracking-tight">Order Management</h2>
-            <div className="relative w-80">
+            <div className="relative w-full max-w-md">
                <MdSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl" />
                <input 
                  type="text" 
@@ -651,21 +973,21 @@ function Orders() {
                />
             </div>
         </div>
-        <button onClick={() => { resetOrderForm(); setShowOrderModal(true); }} className="bg-blue-600 hover:bg-blue-700 text-white py-4 px-10 rounded-2xl font-black text-base flex items-center gap-2 shadow-lg transition-all active:scale-95"><MdAdd size={24} /> New Order</button>
+        <button onClick={() => { resetOrderForm(); setShowOrderModal(true); }} className="bg-blue-600 hover:bg-blue-700 text-white py-3.5 px-8 rounded-2xl font-black text-base flex items-center gap-2 shadow-lg transition-all active:scale-95 shrink-0"><MdAdd size={24} /> New Order</button>
       </div>
 
-      <div className="bg-white rounded-[40px] shadow-2xl p-6 mx-4 overflow-hidden border border-slate-100">
+      <div className="bg-white rounded-[40px] shadow-2xl p-4 md:p-5 mx-2 md:mx-4 overflow-hidden border border-slate-100">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="text-sm font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-50">
-                <th className="px-6 py-5 w-32">Ref ID</th>
-                <th className="px-6 py-5 w-60">Customer</th>
-                <th className="px-6 py-5 min-w-[280px]">Order Details</th>
-                <th className="px-6 py-5 text-center w-40">Payment</th>
-                <th className="px-6 py-5 text-center w-52">Status</th>
-                <th className="px-6 py-5 text-center w-40">Approval</th>
-                <th className="px-6 py-5 text-right w-36">Actions</th>
+              <tr className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-50">
+                <th className="px-4 py-4 w-28">Ref ID</th>
+                <th className="px-4 py-4 w-56">Customer</th>
+                <th className="px-4 py-4 min-w-[220px]">Order Details</th>
+                <th className="px-4 py-4 text-center w-32">Payment</th>
+                <th className="px-4 py-4 text-center w-40">Status</th>
+                <th className="px-4 py-4 text-center w-36">Approval</th>
+                <th className="px-4 py-4 text-right w-28">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -675,13 +997,13 @@ function Orders() {
                 <tr><td colSpan="7" className="py-20 text-center text-slate-400 font-bold text-lg italic">Loading.....</td></tr>
               ) : filteredOrders.map(o => (
                 <tr key={o.id} className="hover:bg-slate-50/80 transition-all group">
-                  <td className="px-6 py-8 align-top">
+                  <td className="px-4 py-6 align-top">
                     <span className="font-black text-slate-900 text-base uppercase bg-slate-100 px-3 py-1.5 rounded-lg block text-center">
                         {asText(o.id).split("-")[0]}
                     </span>
                   </td>
 
-                  <td className="px-6 py-8 align-top">
+                  <td className="px-4 py-6 align-top">
                     <div className="flex flex-col">
                         {(() => {
                           const customerMatch = customers.find(c => {
@@ -708,28 +1030,53 @@ function Orders() {
                     </div>
                   </td>
 
-                  <td className="px-6 py-8 align-top">
-                    <div className="flex flex-col gap-2">
+                  <td className="px-4 py-6 align-top">
+                    <div className="flex flex-col gap-2 max-w-[360px]">
                        {(() => {
                         try {
                             if (!o.items) return <span className="text-xs text-slate-400 italic">Empty Order</span>;
-                            const parsed = normalizeItems(o.items);
+                            const parsed = buildPricedItems(o);
                             
                             if (Array.isArray(parsed)) {
                                 if (parsed.length === 0) return <span className="text-xs text-slate-400 italic">Empty Order</span>;
-                                return parsed.map((item, i) => (
-                                    <div key={i} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 max-w-sm">
-                                        <span className="font-black text-slate-900 text-sm leading-tight">
-                                            {getItemName(item)}
+                                const isExpanded = Boolean(expandedOrderItems[o.id]);
+                                const previewItems = isExpanded ? parsed : parsed.slice(0, 3);
+                                const remainingCount = parsed.length - previewItems.length;
+                                return (
+                                  <>
+                                    {previewItems.map((item, i) => (
+                                      <div key={i} className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
+                                        <span className="font-black text-slate-900 text-sm leading-tight truncate" title={getItemName(item)}>
+                                          {getItemName(item)}
                                         </span>
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-[10px] text-slate-400 font-bold">?{getItemPrice(item)}</span>
-                                            <span className="font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded text-sm">
-                                                x{getItemQty(item)}
-                                            </span>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <span className="text-[10px] text-slate-500 font-bold">₹{Number(getItemPrice(item) || 0).toLocaleString("en-IN")}</span>
+                                          <span className="font-black text-blue-700 bg-blue-100 px-2 py-0.5 rounded text-xs">
+                                            x{getItemQty(item)}
+                                          </span>
                                         </div>
-                                    </div>
-                                ));
+                                      </div>
+                                    ))}
+                                    {remainingCount > 0 && !isExpanded && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleExpandedItems(o.id)}
+                                        className="text-xs font-bold text-slate-500 hover:text-blue-600 pl-1 text-left"
+                                      >
+                                        +{remainingCount} more item{remainingCount > 1 ? "s" : ""}
+                                      </button>
+                                    )}
+                                    {isExpanded && parsed.length > 3 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleExpandedItems(o.id)}
+                                        className="text-xs font-bold text-blue-600 hover:text-blue-700 pl-1 text-left"
+                                      >
+                                        Show less
+                                      </button>
+                                    )}
+                                  </>
+                                );
                             }
                             if (typeof parsed === "string") {
                               return <span className="font-black text-slate-900 text-base leading-tight">{parsed}</span>;
@@ -740,7 +1087,7 @@ function Orders() {
                     </div>
                   </td>
                   
-                  <td className="px-6 py-8 align-top text-center">
+                  <td className="px-4 py-6 align-top text-center">
                     <div className="flex flex-col items-center gap-1">
                         <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${o.payment_status === 'Paid' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
                             {o.payment_status || 'Pending'}
@@ -749,14 +1096,14 @@ function Orders() {
                     </div>
                   </td>
 
-                  <td className="px-6 py-8 align-top text-center">
+                  <td className="px-4 py-6 align-top text-center">
                     <select 
                       disabled={o.status === "Cancelled" || !o.is_approved}
                       value={o.status}
                       onChange={(e) => updateOrderStatus(o.id, e.target.value)}
-                      className={`h-11 px-3 rounded-2xl text-[11px] font-black uppercase tracking-widest border-2 outline-none transition-all appearance-none text-center w-full
+                      className={`h-10 px-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border-2 outline-none transition-all appearance-none text-center w-32
                         ${o.status === "Delivered" ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-700 focus:border-blue-400 shadow-sm"}
-                        (${(o.status === "Cancelled" || !o.is_approved) ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-blue-300"}
+                        ${(o.status === "Cancelled" || !o.is_approved) ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-blue-300"}
                       `}
                     >
                       {trackingStatuses.map(status => (
@@ -764,9 +1111,14 @@ function Orders() {
                       ))}
                       {o.status === "Cancelled" && <option value="Cancelled">Cancelled</option>}
                     </select>
+                    {o.status === "Delivered" && o.delivered_at && (
+                      <p className="mt-2 text-[10px] font-bold text-emerald-600">
+                        Delivered: {formatDateTime(o.delivered_at)}
+                      </p>
+                    )}
                   </td>
 
-                  <td className="px-6 py-8 align-top text-center">
+                  <td className="px-4 py-6 align-top text-center">
                     {o.status === "Cancelled" ? (
                       <span className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-100 text-rose-600 inline-block">
                         Cancelled
@@ -793,7 +1145,7 @@ function Orders() {
                     )}
                   </td>
 
-                  <td className="px-6 py-8 align-top text-right">
+                  <td className="px-4 py-6 align-top text-right">
                     <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => setSelectedOrder(o)} className="p-3 text-blue-600 bg-blue-50 rounded-2xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"><MdVisibility size={20} /></button>
                       <button onClick={() => openEditModal(o)} className="p-3 text-amber-600 bg-amber-50 rounded-2xl hover:bg-amber-600 hover:text-white transition-all shadow-sm"><MdEdit size={20} /></button>
@@ -863,6 +1215,17 @@ function Orders() {
                   value={orderForm.email}
                   onChange={(e) => setOrderForm({ ...orderForm, email: e.target.value })}
                   className="w-full h-14 bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 outline-none font-bold text-slate-800 placeholder:text-slate-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-1 block">Customer Address</label>
+                <textarea
+                  value={orderForm.address || ""}
+                  readOnly
+                  rows={3}
+                  placeholder="Address will appear here when you select an existing customer"
+                  className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl px-6 py-4 outline-none font-bold text-slate-800 placeholder:text-slate-400 resize-none"
                 />
               </div>
 
@@ -940,24 +1303,34 @@ function Orders() {
                     <p className="font-bold text-slate-500 uppercase text-[10px] tracking-widest">Customer Details</p>
                     <h2 className="text-2xl font-black text-slate-900">{selectedOrder.customer_name || 'Walking Customer'}</h2>
                     <p className="text-slate-600 font-bold text-lg">{selectedOrder.phone_number}</p>
+                    <p className="text-slate-500 font-semibold text-sm mt-2 max-w-xs leading-5">
+                      {getResolvedCustomerAddress(selectedOrder) || "Address not available"}
+                    </p>
                   </div>
                   <div className="text-right">
                     <span className={`px-4 py-2 rounded-xl text-xs font-black uppercase ${selectedOrder.payment_status === 'Paid' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
                         {selectedOrder.payment_status || 'Pending'}
                     </span>
                     <p className="text-[10px] font-bold text-slate-400 mt-2">{selectedOrder.payment_method}</p>
+                    {selectedOrder.status === "Delivered" && selectedOrder.delivered_at && (
+                      <p className="text-[10px] font-bold text-emerald-600 mt-2">
+                        Delivered: {formatDateTime(selectedOrder.delivered_at)}
+                      </p>
+                    )}
                   </div>
               </div>
               <div className="space-y-2 border-y py-6 my-2">
                 {(() => {
                   try {
-                    const parsed = normalizeItems(selectedOrder.items);
+                    const parsed = buildPricedItems(selectedOrder);
                     if (Array.isArray(parsed)) {
                         if (parsed.length === 0) return <div className="text-sm font-bold text-slate-400">No items found</div>;
                         return parsed.map((item, i) => (
-                          <div key={i} className="flex justify-between text-base py-1">
-                            <span className="font-bold text-slate-700">{getItemName(item)} <span className="text-slate-400 ml-1">x{getItemQty(item)}</span></span>
-                            <span className="font-black text-slate-900">???{Number(getItemTotal(item) || 0).toLocaleString()}</span>
+                          <div key={i} className="flex justify-between items-start gap-3 text-base py-1">
+                            <span className="font-bold text-slate-700 leading-6 flex-1">
+                              {getItemName(item)} <span className="text-slate-400 ml-1">x{getItemQty(item)}</span>
+                            </span>
+                            <span className="font-black text-slate-900 whitespace-nowrap">₹{Number(getItemTotal(item) || 0).toLocaleString()}</span>
                           </div>
                         ));
                     }
@@ -982,3 +1355,4 @@ function Orders() {
 }
 
 export default Orders;
+
